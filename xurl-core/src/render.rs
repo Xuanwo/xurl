@@ -132,6 +132,7 @@ fn extract_timeline_entries(
             ProviderKind::Gemini => None,
             ProviderKind::Pi => None,
             ProviderKind::Opencode => extract_opencode_message(&value).map(TimelineEntry::Message),
+            ProviderKind::Openclaw => extract_opencode_message(&value).map(TimelineEntry::Message),
         };
 
         if let Some(entry) = extracted {

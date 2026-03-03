@@ -24,6 +24,7 @@ use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
 use crate::provider::codex::CodexProvider;
 use crate::provider::gemini::GeminiProvider;
+use crate::provider::openclaw::OpenClawProvider;
 use crate::provider::opencode::OpencodeProvider;
 use crate::provider::pi::PiProvider;
 use crate::provider::skills::SkillsProvider;
@@ -171,6 +172,7 @@ pub fn resolve_thread(uri: &AgentsUri, roots: &ProviderRoots) -> Result<Resolved
         ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).resolve(session_id),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).resolve(session_id),
         ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).resolve(session_id),
+        ProviderKind::Openclaw => OpenClawProvider::new(&roots.openclaw_root).resolve(session_id),
     }
 }
 
@@ -191,6 +193,7 @@ pub fn write_thread(
         ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).write(req, sink),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).write(req, sink),
         ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).write(req, sink),
+        ProviderKind::Openclaw => OpenClawProvider::new(&roots.openclaw_root).write(req, sink),
     }
 }
 
@@ -224,6 +227,15 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
         ProviderKind::Gemini => collect_gemini_query_candidates(roots, &mut warnings),
         ProviderKind::Pi => collect_pi_query_candidates(roots, &mut warnings),
         ProviderKind::Opencode => collect_opencode_query_candidates(
+            roots,
+            &mut warnings,
+            query.q.as_deref().is_some_and(|q| !q.trim().is_empty())
+                || query
+                    .role
+                    .as_deref()
+                    .is_some_and(|role| !role.trim().is_empty()),
+        )?,
+        ProviderKind::Openclaw => collect_openclaw_query_candidates(
             roots,
             &mut warnings,
             query.q.as_deref().is_some_and(|q| !q.trim().is_empty())
@@ -487,7 +499,8 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
             | ProviderKind::Codex
             | ProviderKind::Claude
             | ProviderKind::Gemini
-            | ProviderKind::Opencode,
+            | ProviderKind::Opencode
+            | ProviderKind::Openclaw,
             None,
         ) => {
             let resolved_main = resolve_thread(uri, roots)?;
@@ -533,7 +546,8 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
             | ProviderKind::Codex
             | ProviderKind::Claude
             | ProviderKind::Gemini
-            | ProviderKind::Opencode,
+            | ProviderKind::Opencode
+            | ProviderKind::Openclaw,
             Some(_),
         ) => {
             let main_uri = main_thread_uri(uri);
@@ -655,6 +669,7 @@ pub fn resolve_subagent_view(
         ProviderKind::Gemini => resolve_gemini_subagent_view(uri, roots, list),
         ProviderKind::Pi => resolve_pi_subagent_view(uri, roots, list),
         ProviderKind::Opencode => resolve_opencode_subagent_view(uri, roots, list),
+        ProviderKind::Openclaw => resolve_openclaw_subagent_view(uri, roots, list),
     }
 }
 
@@ -3247,6 +3262,17 @@ fn resolve_opencode_subagent_view(
     }))
 }
 
+fn resolve_openclaw_subagent_view(
+    _uri: &AgentsUri,
+    _roots: &ProviderRoots,
+    _list: bool,
+) -> Result<SubagentView> {
+    // OpenClaw does not support subagents
+    Err(XurlError::UnsupportedSubagentProvider(
+        ProviderKind::Openclaw.to_string(),
+    ))
+}
+
 fn discover_opencode_agents(
     roots: &ProviderRoots,
     main_session_id: &str,
@@ -4025,6 +4051,58 @@ fn collect_opencode_query_candidates(
             updated_at: updated_epoch.map(|value| value.to_string()),
             updated_epoch,
             search_target,
+        });
+    }
+
+    Ok(candidates)
+}
+
+fn collect_openclaw_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+    _with_search_text: bool,
+) -> Result<Vec<QueryCandidate>> {
+    let sessions_dir = roots.openclaw_root.join("data/sessions");
+    if !sessions_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(&sessions_dir)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.into_path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+
+        let Some(session_id) = path.file_stem().and_then(|name| name.to_str()) else {
+            warnings.push(format!(
+                "skipped openclaw session with invalid filename: {}",
+                path.display()
+            ));
+            continue;
+        };
+
+        if AgentsUri::parse(&format!("openclaw://{session_id}")).is_err() {
+            warnings.push(format!(
+                "skipped openclaw session with invalid id={session_id} from {}",
+                path.display()
+            ));
+            continue;
+        }
+
+        candidates.push(QueryCandidate {
+            thread_id: session_id.to_string(),
+            uri: format!("agents://openclaw/{session_id}"),
+            thread_source: path.display().to_string(),
+            updated_at: modified_timestamp_string(&path),
+            updated_epoch: file_modified_epoch(&path),
+            search_target: QuerySearchTarget::Text(String::new()),
         });
     }
 
