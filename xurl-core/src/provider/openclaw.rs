@@ -455,3 +455,79 @@ mod tests {
         assert_ne!(first_path, second_path);
     }
 }
+
+#[cfg(test)]
+mod integration_tests {
+    use std::process::Command;
+
+    /// Integration test: Verify openclaw CLI is available and responds to --version
+    #[test]
+    #[ignore]
+    fn test_openclaw_cli_version() {
+        let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+            .args(["-NoProfile", "-Command", "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw --version"])
+            .output()
+            .expect("Failed to execute openclaw --version");
+
+        assert!(output.status.success(), "openclaw CLI should be available");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let output_str = format!("{}{}", stdout, stderr);
+        println!("output_str: {:?}", output_str);
+        assert!(output_str.contains("2026"), "Should return OpenClaw version info");
+    }
+
+    /// Integration test: Verify openclaw agent --help works
+    #[test]
+    #[ignore]
+    fn test_openclaw_agent_help() {
+        let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+            .args(["-NoProfile", "-Command", "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw agent --help"])
+            .output()
+            .expect("Failed to execute openclaw agent --help");
+
+        assert!(output.status.success(), "openclaw agent --help should work");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let output_str = format!("{}{}", stdout, stderr);
+        assert!(output_str.contains("--message"), "Should have --message option");
+        assert!(output_str.contains("--session-id"), "Should have --session-id option");
+        assert!(output_str.contains("--json"), "Should have --json option");
+    }
+
+    /// Integration test: Verify openclaw sessions --help works
+    #[test]
+    #[ignore]
+    fn test_openclaw_sessions_help() {
+        let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+            .args(["-NoProfile", "-Command", "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw sessions --help"])
+            .output()
+            .expect("Failed to execute openclaw sessions --help");
+
+        assert!(output.status.success(), "openclaw sessions --help should work");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let output_str = format!("{}{}", stdout, stderr);
+        assert!(output_str.contains("cleanup"), "Should have cleanup subcommand");
+        assert!(output_str.contains("--active"), "Should have --active option");
+    }
+
+    /// Integration test: Verify openclaw status works
+    #[test]
+    #[ignore]
+    fn test_openclaw_status() {
+        let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+            .args(["-NoProfile", "-Command", "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw status"])
+            .output()
+            .expect("Failed to execute openclaw status");
+
+        assert!(output.status.success(), "openclaw status should work");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let output_str = format!("{}{}", stdout, stderr);
+        assert!(output_str.contains("OpenClaw") || output_str.contains("gateway") || !output_str.is_empty(), 
+            "Should return status info");
+    }
+}
+
+
