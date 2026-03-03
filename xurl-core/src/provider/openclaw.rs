@@ -369,23 +369,20 @@ impl Provider for OpenClawProvider {
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
         let warnings = Vec::new();
-        // Use: openclaw sessions spawn --task '...' [--label ...]
+        // Use: openclaw agent --message '...' [--agent ...]
         let mut args = vec![
-            "sessions".to_string(),
-            "spawn".to_string(),
-            "--task".to_string(),
+            "agent".to_string(), "--message".to_string(),
             req.prompt.clone(),
         ];
         if let Some(session_id) = req.session_id.as_deref() {
-            args.push("--session".to_string());
+            args.push("--session-id".to_string());
             args.push(session_id.to_string());
         }
         if let Some(label) = req.options.role.as_deref() {
-            args.push("--label".to_string());
+            args.push("--agent".to_string());
             args.push(label.to_string());
         }
-        args.push("--format".to_string());
-        args.push("json".to_string());
+        args.push("--json".to_string());
         append_passthrough_args(&mut args, &req.options.params);
         self.run_write(&args, req, sink, warnings)
     }
