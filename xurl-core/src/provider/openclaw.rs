@@ -371,7 +371,8 @@ impl Provider for OpenClawProvider {
         let warnings = Vec::new();
         // Use: openclaw agent --message '...' [--agent ...]
         let mut args = vec![
-            "agent".to_string(), "--message".to_string(),
+            "agent".to_string(),
+            "--message".to_string(),
             req.prompt.clone(),
         ];
         if let Some(session_id) = req.session_id.as_deref() {
@@ -465,7 +466,11 @@ mod integration_tests {
     #[ignore]
     fn test_openclaw_cli_version() {
         let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
-            .args(["-NoProfile", "-Command", "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw --version"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw --version",
+            ])
             .output()
             .expect("Failed to execute openclaw --version");
 
@@ -474,7 +479,10 @@ mod integration_tests {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let output_str = format!("{}{}", stdout, stderr);
         println!("output_str: {:?}", output_str);
-        assert!(output_str.contains("2026"), "Should return OpenClaw version info");
+        assert!(
+            output_str.contains("2026"),
+            "Should return OpenClaw version info"
+        );
     }
 
     /// Integration test: Verify openclaw agent --help works
@@ -490,8 +498,14 @@ mod integration_tests {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let output_str = format!("{}{}", stdout, stderr);
-        assert!(output_str.contains("--message"), "Should have --message option");
-        assert!(output_str.contains("--session-id"), "Should have --session-id option");
+        assert!(
+            output_str.contains("--message"),
+            "Should have --message option"
+        );
+        assert!(
+            output_str.contains("--session-id"),
+            "Should have --session-id option"
+        );
         assert!(output_str.contains("--json"), "Should have --json option");
     }
 
@@ -504,12 +518,21 @@ mod integration_tests {
             .output()
             .expect("Failed to execute openclaw sessions --help");
 
-        assert!(output.status.success(), "openclaw sessions --help should work");
+        assert!(
+            output.status.success(),
+            "openclaw sessions --help should work"
+        );
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let output_str = format!("{}{}", stdout, stderr);
-        assert!(output_str.contains("cleanup"), "Should have cleanup subcommand");
-        assert!(output_str.contains("--active"), "Should have --active option");
+        assert!(
+            output_str.contains("cleanup"),
+            "Should have cleanup subcommand"
+        );
+        assert!(
+            output_str.contains("--active"),
+            "Should have --active option"
+        );
     }
 
     /// Integration test: Verify openclaw status works
@@ -517,7 +540,11 @@ mod integration_tests {
     #[ignore]
     fn test_openclaw_status() {
         let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
-            .args(["-NoProfile", "-Command", "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw status"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw status",
+            ])
             .output()
             .expect("Failed to execute openclaw status");
 
@@ -525,9 +552,11 @@ mod integration_tests {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let output_str = format!("{}{}", stdout, stderr);
-        assert!(output_str.contains("OpenClaw") || output_str.contains("gateway") || !output_str.is_empty(), 
-            "Should return status info");
+        assert!(
+            output_str.contains("OpenClaw")
+                || output_str.contains("gateway")
+                || !output_str.is_empty(),
+            "Should return status info"
+        );
     }
 }
-
-
