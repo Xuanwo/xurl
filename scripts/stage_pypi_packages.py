@@ -69,11 +69,18 @@ def render_setup_py(version: str) -> str:
     return f"""from pathlib import Path
 from setuptools import setup
 from setuptools.dist import Distribution
+from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
 
 
 class BinaryDistribution(Distribution):
     def has_ext_modules(self):
         return True
+
+
+class Py3NonePlatformWheel(_bdist_wheel):
+    def get_tag(self):
+        _python, _abi, plat = super().get_tag()
+        return ("py3", "none", plat)
 
 readme_path = Path(__file__).resolve().parent / "README.md"
 long_description = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
@@ -97,6 +104,7 @@ setup(
         "Issues": "https://github.com/Xuanwo/xurl/issues",
     }},
     entry_points={{"console_scripts": ["xurl={IMPORT_NAME}._runner:main"]}},
+    cmdclass={{"bdist_wheel": Py3NonePlatformWheel}},
     distclass=BinaryDistribution,
 )
 """
@@ -171,8 +179,6 @@ def stage_wheel(
                 "python3",
                 "setup.py",
                 "bdist_wheel",
-                "--python-tag",
-                "py3",
                 "--plat-name",
                 plat_name,
                 "--dist-dir",
