@@ -241,9 +241,11 @@ fn parse_legacy_target<'a>(scheme: &str, target: &'a str, input: &str) -> Result
     let normalized_target = match provider {
         ProviderKind::Amp => target,
         ProviderKind::Codex => target.strip_prefix("threads/").unwrap_or(target),
-        ProviderKind::Claude | ProviderKind::Gemini | ProviderKind::Pi | ProviderKind::Opencode => {
-            target
-        }
+        ProviderKind::Claude
+        | ProviderKind::Gemini
+        | ProviderKind::Pi
+        | ProviderKind::Opencode
+        | ProviderKind::Openclaw => target,
     };
     let mut segments = normalized_target.split('/');
     let main_id = segments.next().unwrap_or_default();
@@ -320,7 +322,7 @@ impl FromStr for AgentsUri {
             | ProviderKind::Claude
             | ProviderKind::Gemini
             | ProviderKind::Pi => raw_id.to_ascii_lowercase(),
-            ProviderKind::Opencode => raw_id.to_string(),
+            ProviderKind::Opencode | ProviderKind::Openclaw => raw_id.to_string(),
         };
 
         let agent_id = raw_agent_id.map(|agent_id| {
@@ -440,6 +442,7 @@ fn parse_provider(scheme: &str) -> Result<ProviderKind> {
         "gemini" => Ok(ProviderKind::Gemini),
         "pi" => Ok(ProviderKind::Pi),
         "opencode" => Ok(ProviderKind::Opencode),
+        "openclaw" => Ok(ProviderKind::Openclaw),
         _ => Err(XurlError::UnsupportedScheme(scheme.to_string())),
     }
 }
@@ -450,7 +453,7 @@ fn looks_like_session_id(provider: ProviderKind, token: &str) -> bool {
         ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini | ProviderKind::Pi => {
             is_uuid_session_id(token)
         }
-        ProviderKind::Opencode => OPENCODE_SESSION_ID_RE.is_match(token),
+        ProviderKind::Opencode | ProviderKind::Openclaw => OPENCODE_SESSION_ID_RE.is_match(token),
     }
 }
 

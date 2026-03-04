@@ -10,6 +10,7 @@ pub mod amp;
 pub mod claude;
 pub mod codex;
 pub mod gemini;
+pub mod openclaw;
 pub mod opencode;
 pub mod pi;
 pub mod skills;
@@ -61,6 +62,7 @@ pub struct ProviderRoots {
     pub gemini_root: PathBuf,
     pub pi_root: PathBuf,
     pub opencode_root: PathBuf,
+    pub openclaw_root: PathBuf,
     pub skills_root: PathBuf,
     pub skills_cache_root: PathBuf,
 }
@@ -118,6 +120,14 @@ impl ProviderRoots {
             .unwrap_or_else(|| home.join(".local/share/opencode"));
 
         // Precedence:
+        // 1) OPENCLAW_HOME
+        // 2) ~/.openclaw
+        let openclaw_root = env::var_os("OPENCLAW_HOME")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".openclaw"));
+
+        // Precedence:
         // 1) XURL_SKILLS_ROOT
         // 2) ~/.agents/skills
         let skills_root = env::var_os("XURL_SKILLS_ROOT")
@@ -140,6 +150,7 @@ impl ProviderRoots {
             gemini_root,
             pi_root,
             opencode_root,
+            openclaw_root,
             skills_root,
             skills_cache_root,
         })
