@@ -10,7 +10,6 @@
 - Query recent threads and keyword matches for a provider.
 - Query role-scoped threads with `agents://<provider>/<role>`.
 - Discover subagent/branch navigation targets.
-- Read local and GitHub-hosted skills via `skills://` URIs.
 - Start a new conversation with agents.
 - Continue an existing conversation with follow-up prompts.
 
@@ -112,24 +111,6 @@ Save output:
 xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 ```
 
-Read a local skill:
-
-```bash
-xurl skills://xurl
-```
-
-Read a GitHub skill:
-
-```bash
-xurl skills://github.com/Xuanwo/xurl/skills/xurl
-```
-
-Read skills frontmatter only:
-
-```bash
-xurl -I skills://xurl
-```
-
 ## Command Reference
 
 ```bash
@@ -142,7 +123,6 @@ xurl [OPTIONS] <URI>
   - file: `-d @prompt.txt`
   - stdin: `-d @-`
 - `-o, --output <PATH>`: write command output to file.
-- `-d, --data` is not supported for `skills://` URIs.
 
 ## URI Reference
 
@@ -175,11 +155,4 @@ agents://codex?q=spawn_agent&limit=10
 agents://codex/threads/<conversation_id>
 agents://codex/reviewer
 agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared
-```
-
-### Skills URI
-
-```text
-skills://<skill_name>
-skills://github.com/<owner>/<repo>[/<skill_dir>]
 ```
