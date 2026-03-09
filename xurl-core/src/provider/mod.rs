@@ -12,7 +12,6 @@ pub mod codex;
 pub mod gemini;
 pub mod opencode;
 pub mod pi;
-pub mod skills;
 
 pub(crate) fn append_passthrough_args(args: &mut Vec<String>, params: &[(String, Option<String>)]) {
     append_passthrough_args_excluding(args, params, &[]);
@@ -61,8 +60,6 @@ pub struct ProviderRoots {
     pub gemini_root: PathBuf,
     pub pi_root: PathBuf,
     pub opencode_root: PathBuf,
-    pub skills_root: PathBuf,
-    pub skills_cache_root: PathBuf,
 }
 
 impl ProviderRoots {
@@ -117,22 +114,6 @@ impl ProviderRoots {
             .map(|path| path.join("opencode"))
             .unwrap_or_else(|| home.join(".local/share/opencode"));
 
-        // Precedence:
-        // 1) XURL_SKILLS_ROOT
-        // 2) ~/.agents/skills
-        let skills_root = env::var_os("XURL_SKILLS_ROOT")
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".agents/skills"));
-
-        // Precedence:
-        // 1) XURL_SKILLS_CACHE_ROOT
-        // 2) ~/.xurl/skills
-        let skills_cache_root = env::var_os("XURL_SKILLS_CACHE_ROOT")
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".xurl/skills"));
-
         Ok(Self {
             amp_root,
             codex_root,
@@ -140,8 +121,6 @@ impl ProviderRoots {
             gemini_root,
             pi_root,
             opencode_root,
-            skills_root,
-            skills_cache_root,
         })
     }
 }

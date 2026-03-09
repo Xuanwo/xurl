@@ -15,10 +15,10 @@ use walkdir::WalkDir;
 use crate::error::{Result, XurlError};
 use crate::jsonl;
 use crate::model::{
-    MessageRole, PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedSkill,
-    ResolvedThread, SubagentDetailView, SubagentExcerptMessage, SubagentLifecycleEvent,
-    SubagentListItem, SubagentListView, SubagentQuery, SubagentRelation, SubagentThreadRef,
-    SubagentView, ThreadQuery, ThreadQueryItem, ThreadQueryResult, WriteRequest, WriteResult,
+    MessageRole, PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedThread,
+    SubagentDetailView, SubagentExcerptMessage, SubagentLifecycleEvent, SubagentListItem,
+    SubagentListView, SubagentQuery, SubagentRelation, SubagentThreadRef, SubagentView,
+    ThreadQuery, ThreadQueryItem, ThreadQueryResult, WriteRequest, WriteResult,
 };
 use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
@@ -26,10 +26,9 @@ use crate::provider::codex::CodexProvider;
 use crate::provider::gemini::GeminiProvider;
 use crate::provider::opencode::OpencodeProvider;
 use crate::provider::pi::PiProvider;
-use crate::provider::skills::SkillsProvider;
 use crate::provider::{Provider, ProviderRoots, WriteEventSink};
 use crate::render;
-use crate::uri::{AgentsUri, SkillsUri, is_uuid_session_id};
+use crate::uri::{AgentsUri, is_uuid_session_id};
 
 const STATUS_PENDING_INIT: &str = "pendingInit";
 const STATUS_RUNNING: &str = "running";
@@ -172,10 +171,6 @@ pub fn resolve_thread(uri: &AgentsUri, roots: &ProviderRoots) -> Result<Resolved
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).resolve(session_id),
         ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).resolve(session_id),
     }
-}
-
-pub fn resolve_skill(uri: &SkillsUri, roots: &ProviderRoots) -> Result<ResolvedSkill> {
-    SkillsProvider::new(&roots.skills_root, &roots.skills_cache_root).resolve(uri)
 }
 
 pub fn write_thread(
@@ -443,35 +438,6 @@ pub fn render_thread_markdown(uri: &AgentsUri, resolved: &ResolvedThread) -> Res
     let raw = read_thread_raw(&resolved.path)?;
     let markdown = render::render_markdown(uri, &resolved.path, &raw)?;
     Ok(strip_frontmatter(markdown))
-}
-
-pub fn render_skill_markdown(resolved: &ResolvedSkill) -> String {
-    resolved.content.clone()
-}
-
-pub fn render_skill_head_markdown(resolved: &ResolvedSkill) -> String {
-    let mut output = String::new();
-    output.push_str("---\n");
-    push_yaml_string(&mut output, "uri", &resolved.uri);
-    push_yaml_string(&mut output, "kind", "skill");
-    push_yaml_string(&mut output, "provider", "skills");
-    push_yaml_string(
-        &mut output,
-        "source_kind",
-        &resolved.source_kind.to_string(),
-    );
-    push_yaml_string(&mut output, "skill_name", &resolved.skill_name);
-    push_yaml_string(&mut output, "source", &resolved.source);
-    push_yaml_string(&mut output, "resolved_path", &resolved.resolved_path);
-    render_warnings(&mut output, &resolved.metadata.warnings);
-    if !resolved.metadata.candidates.is_empty() {
-        output.push_str("candidates:\n");
-        for candidate in &resolved.metadata.candidates {
-            output.push_str(&format!("  - '{}'\n", yaml_single_quoted(candidate)));
-        }
-    }
-    output.push_str("---\n");
-    output
 }
 
 pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Result<String> {
