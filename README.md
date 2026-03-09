@@ -28,58 +28,6 @@ npx skills add Xuanwo/xurl
 Please summarize this thread: agents://codex/xxx_thread
 ```
 
-## Installation
-
-### Cargo
-
-Install via Cargo:
-
-```bash
-cargo install xurl-cli
-xurl --version
-```
-
-Upgrade `xurl` installed by Cargo:
-
-```bash
-cargo install xurl-cli --force
-xurl --version
-```
-
-### Homebrew
-
-Install via Homebrew tap:
-
-```bash
-brew tap xuanwo/tap
-brew install xurl
-xurl --version
-```
-
-### Python
-
-Install from PyPI via `uv`:
-
-```bash
-uv tool install xuanwo-xurl
-xurl --version
-```
-
-### Node.js
-
-Temporary usage without install:
-
-```bash
-npx @xuanwo/xurl --help
-```
-
-Install globally via npm:
-
-```bash
-npm install -g @xuanwo/xurl
-xurl --version
-```
-
 ## Providers
 
 | Provider | Query | Create | Role Create |
@@ -235,8 +183,3 @@ agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared
 skills://<skill_name>
 skills://github.com/<owner>/<repo>[/<skill_dir>]
 ```
-
-## Rust Crates
-
-- `xurl-core` provides the shared URI parsing, provider resolution, and markdown rendering library.
-- `xurl-cli` provides the CLI package and installs the `xurl` binary via `cargo install xurl-cli`.

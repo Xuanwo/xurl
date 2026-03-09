@@ -47,6 +47,12 @@ jobs:
           python3 scripts/prepare_cargo_release.py \
             --version "0.0.0-ci.${{ github.run_number }}"
 
+      - name: Refresh lockfile for injected version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

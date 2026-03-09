@@ -73,6 +73,12 @@ jobs:
           python3 scripts/prepare_cargo_release.py \
             --version "${{ needs.validate-tag.outputs.version }}"
 
+      - name: Refresh lockfile for injected version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -230,6 +236,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/prepare_cargo_release.py --version "${RELEASE_VERSION}"
+
+      - name: Refresh lockfile for injected version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
