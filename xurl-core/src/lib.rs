@@ -1,3 +1,8 @@
+//! Core library for resolving and rendering AI agent URLs.
+//!
+//! The crate exposes shared URI parsing, provider resolution, markdown
+//! rendering, and write helpers used by `xurl-cli`.
+
 pub mod error;
 pub mod jsonl;
 pub mod model;
