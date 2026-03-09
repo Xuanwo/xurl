@@ -27,7 +27,6 @@ npx skills add Xuanwo/xurl
 Please summarize this thread: agents://codex/xxx_thread
 ```
 
-
 ## Providers
 
 | Provider | Query | Create | Role Create |

@@ -34,6 +34,22 @@ brew update
 brew upgrade xurl
 ```
 
+### Cargo Env
+
+Install via Cargo:
+
+```bash
+cargo install xurl-cli
+xurl --version
+```
+
+Upgrade `xurl` installed by Cargo:
+
+```bash
+cargo install xurl-cli --force
+xurl --version
+```
+
 ### Python Env
 
 install from PyPI via `uv`:
