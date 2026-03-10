@@ -494,20 +494,33 @@ fn setup_opencode_subagent_tree() -> tempfile::TempDir {
 
 fn setup_openclaw_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
-    let session_path = temp.path().join(format!(
+    let main_path = temp.path().join(format!(
+        ".openclaw/agents/main/sessions/{OPENCLAW_SESSION_ID}.jsonl"
+    ));
+    let sub_path = temp.path().join(format!(
         ".openclaw/agents/primary/sessions/{OPENCLAW_SESSION_ID}.jsonl"
     ));
-    fs::create_dir_all(session_path.parent().expect("parent")).expect("mkdir");
+    fs::create_dir_all(main_path.parent().expect("parent")).expect("mkdir");
+    fs::create_dir_all(sub_path.parent().expect("parent")).expect("mkdir");
     fs::write(
-        &session_path,
+        &main_path,
         format!(
             "{{\"type\":\"session\",\"version\":3,\"id\":\"{OPENCLAW_SESSION_ID}\",\"timestamp\":\"2026-03-09T09:34:19.978Z\",\"cwd\":\"/tmp/openclaw\"}}\n\
-{{\"type\":\"message\",\"id\":\"m1\",\"parentId\":null,\"timestamp\":\"2026-03-09T09:34:20.014Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello from openclaw\"}}]}}}}\n\
-{{\"type\":\"message\",\"id\":\"m2\",\"parentId\":\"m1\",\"timestamp\":\"2026-03-09T09:34:21.014Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"thinking\",\"thinking\":\"step by step\"}},{{\"type\":\"toolCall\",\"id\":\"call_1\",\"name\":\"exec\",\"arguments\":{{\"command\":\"echo hi\"}}}},{{\"type\":\"text\",\"text\":\"openclaw done\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"m1\",\"parentId\":null,\"timestamp\":\"2026-03-09T09:34:20.014Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello from openclaw main\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"m2\",\"parentId\":\"m1\",\"timestamp\":\"2026-03-09T09:34:21.014Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"thinking\",\"thinking\":\"step by step\"}},{{\"type\":\"toolCall\",\"id\":\"call_1\",\"name\":\"exec\",\"arguments\":{{\"command\":\"echo hi\"}}}},{{\"type\":\"text\",\"text\":\"openclaw main done\"}}]}}}}\n\
 {{\"type\":\"message\",\"id\":\"m3\",\"parentId\":\"m2\",\"timestamp\":\"2026-03-09T09:34:22.014Z\",\"message\":{{\"role\":\"toolResult\",\"content\":[{{\"type\":\"text\",\"text\":\"tool output\"}}]}}}}\n"
         ),
     )
-    .expect("write openclaw session");
+    .expect("write openclaw main session");
+    fs::write(
+        &sub_path,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"{OPENCLAW_SESSION_ID}\",\"timestamp\":\"2026-03-09T09:34:19.978Z\",\"cwd\":\"/tmp/openclaw\"}}\n\
+{{\"type\":\"message\",\"id\":\"s1\",\"parentId\":null,\"timestamp\":\"2026-03-09T09:34:20.014Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello from openclaw subagent\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"s2\",\"parentId\":\"s1\",\"timestamp\":\"2026-03-09T09:34:21.014Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"openclaw subagent done\"}}]}}}}\n"
+        ),
+    )
+    .expect("write openclaw subagent session");
     temp
 }
 
@@ -1856,13 +1869,13 @@ fn openclaw_read_outputs_markdown() {
         .success()
         .stdout(predicate::str::contains("# Thread"))
         .stdout(predicate::str::contains("## 1. User"))
-        .stdout(predicate::str::contains("hello from openclaw"))
+        .stdout(predicate::str::contains("hello from openclaw main"))
         .stdout(predicate::str::contains("## 2. Assistant"))
-        .stdout(predicate::str::contains("openclaw done"));
+        .stdout(predicate::str::contains("openclaw main done"));
 }
 
 #[test]
-fn openclaw_head_outputs_thread_mode() {
+fn openclaw_head_outputs_subagent_index() {
     let temp = setup_openclaw_tree();
     let uri = format!("openclaw://{OPENCLAW_SESSION_ID}");
 
@@ -1873,24 +1886,29 @@ fn openclaw_head_outputs_thread_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains("---\n"))
-        .stdout(predicate::str::contains("mode: 'thread'"))
-        .stdout(predicate::str::contains("subagents:").not())
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(format!(
+            "agents://openclaw/{OPENCLAW_SESSION_ID}/primary"
+        )))
         .stdout(predicate::str::contains("# Thread").not());
 }
 
 #[test]
-fn openclaw_child_uri_is_rejected() {
+fn openclaw_subagent_uri_outputs_markdown_view() {
     let temp = setup_openclaw_tree();
-    let uri = format!("agents://openclaw/{OPENCLAW_SESSION_ID}/child");
+    let uri = format!("openclaw://{OPENCLAW_SESSION_ID}/primary");
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
         .arg(&uri)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "openclaw does not support child thread URI",
-        ));
+        .success()
+        .stdout(predicate::str::contains("# Subagent Thread"))
+        .stdout(predicate::str::contains(format!(
+            "agents://openclaw/{OPENCLAW_SESSION_ID}/primary"
+        )))
+        .stdout(predicate::str::contains("openclaw subagent done"));
 }
 
 #[test]

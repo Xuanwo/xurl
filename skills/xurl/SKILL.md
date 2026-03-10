@@ -247,7 +247,7 @@ Component meanings:
 - `scheme`: optional `agents://` prefix; omitted form is treated as shorthand
 - `provider`: provider name
 - `token`: main conversation id or role name
-- `child_id`: child/subagent id
+- `child_id`: child/subagent id (OpenClaw uses the agent id)
 - `query`: optional key-value parameters
 
 Token resolution (`agents://<provider>/<token>`):
