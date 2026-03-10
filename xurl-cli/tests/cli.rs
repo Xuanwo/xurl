@@ -31,6 +31,7 @@ const OPENCODE_REAL_SESSION_ID: &str = "ses_7v2md9kx3c1p";
 const OPENCODE_MAIN_SESSION_ID: &str = "ses_5x7md9kx3c1p";
 const OPENCODE_CHILD_SESSION_ID: &str = "ses_5x7md9kx3c2p";
 const OPENCODE_CHILD_EMPTY_SESSION_ID: &str = "ses_5x7md9kx3c3p";
+const OPENCLAW_SESSION_ID: &str = "0139048b-6a00-4636-8125-336ba5ed1cf9";
 
 fn setup_codex_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
@@ -490,6 +491,38 @@ fn setup_opencode_subagent_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_openclaw_tree() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let main_path = temp.path().join(format!(
+        ".openclaw/agents/main/sessions/{OPENCLAW_SESSION_ID}.jsonl"
+    ));
+    let sub_path = temp.path().join(format!(
+        ".openclaw/agents/primary/sessions/{OPENCLAW_SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(main_path.parent().expect("parent")).expect("mkdir");
+    fs::create_dir_all(sub_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &main_path,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"{OPENCLAW_SESSION_ID}\",\"timestamp\":\"2026-03-09T09:34:19.978Z\",\"cwd\":\"/tmp/openclaw\"}}\n\
+{{\"type\":\"message\",\"id\":\"m1\",\"parentId\":null,\"timestamp\":\"2026-03-09T09:34:20.014Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello from openclaw main\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"m2\",\"parentId\":\"m1\",\"timestamp\":\"2026-03-09T09:34:21.014Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"thinking\",\"thinking\":\"step by step\"}},{{\"type\":\"toolCall\",\"id\":\"call_1\",\"name\":\"exec\",\"arguments\":{{\"command\":\"echo hi\"}}}},{{\"type\":\"text\",\"text\":\"openclaw main done\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"m3\",\"parentId\":\"m2\",\"timestamp\":\"2026-03-09T09:34:22.014Z\",\"message\":{{\"role\":\"toolResult\",\"content\":[{{\"type\":\"text\",\"text\":\"tool output\"}}]}}}}\n"
+        ),
+    )
+    .expect("write openclaw main session");
+    fs::write(
+        &sub_path,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"{OPENCLAW_SESSION_ID}\",\"timestamp\":\"2026-03-09T09:34:19.978Z\",\"cwd\":\"/tmp/openclaw\"}}\n\
+{{\"type\":\"message\",\"id\":\"s1\",\"parentId\":null,\"timestamp\":\"2026-03-09T09:34:20.014Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello from openclaw subagent\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"s2\",\"parentId\":\"s1\",\"timestamp\":\"2026-03-09T09:34:21.014Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"openclaw subagent done\"}}]}}}}\n"
+        ),
+    )
+    .expect("write openclaw subagent session");
+    temp
+}
+
 fn codex_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex_real_sanitized")
 }
@@ -909,6 +942,23 @@ fn opencode_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains("# Threads"))
         .stdout(predicate::str::contains("- Limit: `1`"))
         .stdout(predicate::str::contains("agents://opencode/"))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn openclaw_collection_query_outputs_markdown() {
+    let temp = setup_openclaw_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg("agents://openclaw?q=openclaw&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://openclaw/{OPENCLAW_SESSION_ID}"
+        )))
         .stdout(predicate::str::contains("- Match:"));
 }
 
@@ -1622,6 +1672,60 @@ fn opencode_subagent_not_found_outputs_markdown_view() {
         .stdout(predicate::str::contains(format!(
             "agent not found for main_session_id={OPENCODE_MAIN_SESSION_ID} agent_id={missing_child}"
         )));
+}
+
+#[test]
+fn openclaw_read_outputs_markdown() {
+    let temp = setup_openclaw_tree();
+    let uri = format!("openclaw://{OPENCLAW_SESSION_ID}");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg(&uri)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("hello from openclaw main"))
+        .stdout(predicate::str::contains("## 2. Assistant"))
+        .stdout(predicate::str::contains("openclaw main done"));
+}
+
+#[test]
+fn openclaw_head_outputs_subagent_index() {
+    let temp = setup_openclaw_tree();
+    let uri = format!("openclaw://{OPENCLAW_SESSION_ID}");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg(&uri)
+        .arg("-I")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("---\n"))
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(format!(
+            "agents://openclaw/{OPENCLAW_SESSION_ID}/primary"
+        )))
+        .stdout(predicate::str::contains("# Thread").not());
+}
+
+#[test]
+fn openclaw_subagent_uri_outputs_markdown_view() {
+    let temp = setup_openclaw_tree();
+    let uri = format!("openclaw://{OPENCLAW_SESSION_ID}/primary");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg(&uri)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Subagent Thread"))
+        .stdout(predicate::str::contains(format!(
+            "agents://openclaw/{OPENCLAW_SESSION_ID}/primary"
+        )))
+        .stdout(predicate::str::contains("openclaw subagent done"));
 }
 
 #[test]

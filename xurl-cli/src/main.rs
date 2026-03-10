@@ -93,7 +93,8 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
             | xurl_core::ProviderKind::Claude
             | xurl_core::ProviderKind::Gemini
             | xurl_core::ProviderKind::Amp
-            | xurl_core::ProviderKind::Opencode => uri.agent_id.is_some(),
+            | xurl_core::ProviderKind::Opencode
+            | xurl_core::ProviderKind::Openclaw => uri.agent_id.is_some(),
             xurl_core::ProviderKind::Pi => uri.agent_id.as_deref().is_some_and(is_uuid_session_id),
         };
         let markdown = if is_subagent_drilldown {
@@ -372,6 +373,9 @@ fn user_facing_error(err: &XurlError) -> String {
         XurlError::CommandNotFound { command } if command.contains("opencode") => format!(
             "{err}\nhint: write mode needs OpenCode CLI; run `opencode --version`, install OpenCode if missing, then configure providers/models."
         ),
+        XurlError::CommandNotFound { command } if command.contains("openclaw") => format!(
+            "{err}\nhint: write mode needs OpenClaw CLI; run `openclaw --version` (or set `XURL_OPENCLAW_BIN`) and ensure `node` is available in PATH."
+        ),
         XurlError::CommandFailed { command, .. } if command.contains("amp") => {
             format!("{err}\nhint: verify authentication with `amp login` and retry.")
         }
@@ -390,6 +394,9 @@ fn user_facing_error(err: &XurlError) -> String {
         XurlError::CommandFailed { command, .. } if command.contains("opencode") => format!(
             "{err}\nhint: verify OpenCode provider/model configuration and retry with `opencode run \"hello\" --format json`."
         ),
+        XurlError::CommandFailed { command, .. } if command.contains("openclaw") => format!(
+            "{err}\nhint: verify OpenClaw gateway/auth setup and retry with `openclaw agent --message \"hello\" --json`."
+        )
         _ => err.to_string(),
     }
 }
