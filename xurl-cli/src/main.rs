@@ -9,11 +9,10 @@ use xurl_core::uri::{
     is_uuid_session_id, parse_collection_query_uri, parse_role_query_uri, parse_role_uri,
 };
 use xurl_core::{
-    AgentsUri, ProviderKind, ProviderRoots, SkillsUri, WriteEventSink, WriteOptions, WriteRequest,
-    WriteResult, XurlError, query_threads, render_skill_head_markdown, render_skill_markdown,
-    render_subagent_view_markdown, render_thread_head_markdown, render_thread_markdown,
-    render_thread_query_head_markdown, render_thread_query_markdown, resolve_skill,
-    resolve_subagent_view, resolve_thread, write_thread,
+    AgentsUri, ProviderKind, ProviderRoots, WriteEventSink, WriteOptions, WriteRequest,
+    WriteResult, XurlError, query_threads, render_subagent_view_markdown,
+    render_thread_head_markdown, render_thread_markdown, render_thread_query_head_markdown,
+    render_thread_query_markdown, resolve_subagent_view, resolve_thread, write_thread,
 };
 
 #[derive(Debug, Parser)]
@@ -56,24 +55,8 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
     } = cli;
     let roots = ProviderRoots::from_env_or_home()?;
     let output = output.as_deref();
-    if uri.starts_with("skills://") && !data.is_empty() {
-        return Err(XurlError::InvalidMode(
-            "write mode (-d/--data) is not supported for skills:// URIs".to_string(),
-        ));
-    }
 
     if data.is_empty() {
-        if uri.starts_with("skills://") {
-            let skills_uri = SkillsUri::parse(&uri)?;
-            let resolved = resolve_skill(&skills_uri, &roots)?;
-            let output_body = if head {
-                render_skill_head_markdown(&resolved)
-            } else {
-                render_skill_markdown(&resolved)
-            };
-            return write_output(output, &output_body);
-        }
-
         if let Some(query) = parse_collection_query_uri(&uri)? {
             let result = query_threads(&query, &roots)?;
             let output_body = if head {
@@ -413,18 +396,7 @@ fn user_facing_error(err: &XurlError) -> String {
         ),
         XurlError::CommandFailed { command, .. } if command.contains("openclaw") => format!(
             "{err}\nhint: verify OpenClaw gateway/auth setup and retry with `openclaw agent --message \"hello\" --json`."
-        ),
-        XurlError::SkillSelectionRequired { candidates, .. } => format!(
-            "{err}\nhint: choose one candidate URI and retry:\n{}",
-            candidates
-                .iter()
-                .map(|candidate| format!("- {candidate}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ),
-        XurlError::SkillNotFound { .. } => {
-            format!("{err}\nhint: verify the skill name/path and retry the skills:// URI.")
-        }
+        )
         _ => err.to_string(),
     }
 }

@@ -1,19 +1,15 @@
 ---
 name: xurl
-description: Use xurl to read, discover, and write AI agent conversations through agents:// URIs, and read skills through skills:// URIs.
+description: Use xurl to read, discover, and write AI agent conversations through agents:// URIs.
 ---
 
 ## When to Use
 
 - User gives `agents://...` URI.
 - User gives shorthand URI like `codex/...` or `codex?...`.
-- User gives `skills://...` URI.
-- User names a skill and asks to load or learn it.
 - User asks to list/search provider threads.
 - User asks to query role-scoped threads like `agents://codex/reviewer`.
 - User asks to read or summarize a conversation.
-- User asks to read local or GitHub-hosted skill content.
-- User task requires capability not covered by current loaded context.
 - User asks to discover child targets before drill-down.
 - User asks to start or continue conversations for providers.
 
@@ -36,6 +32,22 @@ Upgrade via Homebrew:
 ```bash
 brew update
 brew upgrade xurl
+```
+
+### Cargo Env
+
+Install via Cargo:
+
+```bash
+cargo install xurl-cli
+xurl --version
+```
+
+Upgrade `xurl` installed by Cargo:
+
+```bash
+cargo install xurl-cli --force
+xurl --version
 ```
 
 ### Python Env
@@ -161,63 +173,6 @@ xurl agents://codex -d @prompt.txt
 cat prompt.md | xurl agents://claude -d @-
 ```
 
-### 5) Read Skills
-
-Read local skill:
-
-```bash
-xurl skills://xurl
-```
-
-Read GitHub skill:
-
-```bash
-xurl skills://github.com/Xuanwo/xurl/skills/xurl
-```
-
-Frontmatter only:
-
-```bash
-xurl -I skills://xurl
-```
-
-### 5.1) Dynamic Load and Learn
-
-Use this protocol when the user references a skill URI, names a skill, or when the current task needs capability not covered by already loaded context.
-
-Step 1: Resolve target URI.
-
-- If user gives full URI, use it directly.
-- If user gives only a skill name, build `skills://<skill-name>`.
-
-Step 2: Probe metadata first.
-
-```bash
-xurl -I skills://<skill-name>
-```
-
-Step 3: Load full skill content.
-
-```bash
-xurl skills://<skill-name>
-```
-
-Step 4: Extract only execution-critical parts from the loaded skill.
-
-- Trigger conditions (`When to Use`)
-- Input requirements
-- Workflow steps
-- Failure handling and fallback
-
-Step 5: Continue the original task with the extracted rules.
-
-Guardrails:
-
-- Do not use `-d` with `skills://` URIs.
-- Do not append query parameters to `skills://` URIs.
-- Load minimum required skills only; avoid bulk preloading.
-- Deduplicate repeated loads of the same `skills://` URI in the same run.
-
 ## Command Reference
 
 - Base form: `xurl [OPTIONS] <URI>`
@@ -229,7 +184,6 @@ Guardrails:
 - `-o, --output`: write command output to file
 - `--head` and `--data` cannot be combined
 - multiple `-d` values are newline-joined
-- `--data` is not supported for `skills://` URIs
 
 ## URI Reference
 
@@ -274,13 +228,6 @@ Role create behavior by provider:
 - `gemini`: returns clear error (non-interactive role create unsupported)
 - `pi`: returns clear error (role create unsupported)
 
-Skills URI patterns:
-
-- `skills://<skill-name>`: read local skill from `~/.agents/skills/<skill-name>/SKILL.md`
-- `skills://github.com/<owner>/<repo>/<skill-dir>`: read remote skill from cloned cache
-- `skills://github.com/<owner>/<repo>`: auto-match skill; on ambiguity, `xurl` returns candidate URIs
-- `skills://...` does not support query parameters
-
 Query parameters:
 
 - `q=<keyword>`: filter discovery results by keyword. Use when searching conversations by topic.
@@ -293,22 +240,3 @@ Query parameters:
 ### `command not found: <agent>`
 
 Install the provider CLI, then complete provider authentication before retrying.
-
-### `multiple skills matched for uri=...`
-
-Pick one URI from candidates and retry with the full candidate URI shown in the error output.
-
-### `skill not found for uri=...`
-
-Verify the skill name/path first, then retry. For GitHub URIs, prefer explicit `<skill-dir>` if repository contains multiple skills.
-
-### `git command failed: ...` or `command not found: git`
-
-Ensure `git` is installed and network access is available, then retry the same `skills://github.com/...` URI.
-
-### `invalid skills uri: ...` or `unsupported skills host: ...`
-
-Use supported forms only:
-
-- `skills://<skill-name>`
-- `skills://github.com/<owner>/<repo>[/<skill-dir>]`

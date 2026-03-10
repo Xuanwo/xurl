@@ -544,96 +544,6 @@ fn pi_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi_real_sanitized")
 }
 
-fn setup_local_skills_tree() -> tempfile::TempDir {
-    let temp = tempdir().expect("tempdir");
-    let skill_path = temp.path().join("skills/xurl/SKILL.md");
-    fs::create_dir_all(skill_path.parent().expect("parent")).expect("mkdir");
-    fs::write(
-        skill_path,
-        "---\nname: xurl\ndescription: local skill fixture\n---\n\n# xurl\n\nlocal fixture\n",
-    )
-    .expect("write");
-    temp
-}
-
-fn setup_github_skill_remote(
-    base: &Path,
-    owner: &str,
-    repo: &str,
-    files: &[(&str, &str)],
-) -> PathBuf {
-    let work = base.join("work");
-    fs::create_dir_all(&work).expect("mkdir work");
-    run_git_cmd(&["init".to_string(), path_arg(&work)], base);
-
-    for (relative, content) in files {
-        let path = work.join(relative);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("mkdir file parent");
-        }
-        fs::write(path, content).expect("write fixture file");
-    }
-
-    run_git_cmd(
-        &[
-            "-C".to_string(),
-            path_arg(&work),
-            "add".to_string(),
-            ".".to_string(),
-        ],
-        base,
-    );
-    run_git_cmd(
-        &[
-            "-C".to_string(),
-            path_arg(&work),
-            "-c".to_string(),
-            "user.name=Test".to_string(),
-            "-c".to_string(),
-            "user.email=test@example.com".to_string(),
-            "commit".to_string(),
-            "-m".to_string(),
-            "init".to_string(),
-        ],
-        base,
-    );
-
-    let bare = base.join(owner).join(format!("{repo}.git"));
-    if let Some(parent) = bare.parent() {
-        fs::create_dir_all(parent).expect("mkdir bare parent");
-    }
-    run_git_cmd(
-        &[
-            "clone".to_string(),
-            "--bare".to_string(),
-            path_arg(&work),
-            path_arg(&bare),
-        ],
-        base,
-    );
-    bare
-}
-
-fn run_git_cmd(args: &[String], cwd: &Path) {
-    let output = std::process::Command::new("git")
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .expect("git command should run");
-    if !output.status.success() {
-        panic!(
-            "git command failed: {}\nstdout={}\nstderr={}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
-    }
-}
-
-fn path_arg(path: &Path) -> String {
-    path.to_string_lossy().to_string()
-}
-
 fn codex_uri() -> String {
     format!("codex://{SESSION_ID}")
 }
@@ -861,108 +771,17 @@ fn shorthand_uri_outputs_markdown() {
 }
 
 #[test]
-fn skills_local_outputs_markdown() {
-    let temp = setup_local_skills_tree();
+fn skills_scheme_is_rejected() {
+    let temp = setup_codex_tree();
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env("XURL_SKILLS_ROOT", temp.path().join("skills"))
+    cmd.env("CODEX_HOME", temp.path())
         .arg("skills://xurl")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("name: xurl"))
-        .stdout(predicate::str::contains("# xurl"))
-        .stdout(predicate::str::contains("local fixture"));
-}
-
-#[test]
-fn skills_local_head_outputs_frontmatter() {
-    let temp = setup_local_skills_tree();
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env("XURL_SKILLS_ROOT", temp.path().join("skills"))
-        .arg("-I")
-        .arg("skills://xurl")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("kind: 'skill'"))
-        .stdout(predicate::str::contains("provider: 'skills'"))
-        .stdout(predicate::str::contains("source_kind: 'local'"))
-        .stdout(predicate::str::contains("source: '"))
-        .stdout(predicate::str::contains("resolved_path: 'xurl/SKILL.md'"));
-}
-
-#[test]
-fn skills_write_mode_is_rejected() {
-    let temp = setup_local_skills_tree();
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env("XURL_SKILLS_ROOT", temp.path().join("skills"))
-        .arg("skills://xurl")
-        .arg("-d")
-        .arg("hello")
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "write mode (-d/--data) is not supported for skills:// URIs",
+            "error: unsupported scheme: skills",
         ));
-}
-
-#[test]
-fn skills_github_outputs_markdown() {
-    let temp = tempdir().expect("tempdir");
-    let remotes = temp.path().join("remotes");
-    setup_github_skill_remote(
-        &remotes,
-        "Xuanwo",
-        "xurl",
-        &[("skills/xurl/SKILL.md", "---\nname: xurl\n---\n\n# remote\n")],
-    );
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env(
-        "XURL_SKILLS_GITHUB_BASE_URL",
-        format!("file://{}", remotes.display()),
-    )
-    .env("XURL_SKILLS_CACHE_ROOT", temp.path().join("cache"))
-    .arg("skills://github.com/Xuanwo/xurl/skills/xurl")
-    .assert()
-    .success()
-    .stdout(predicate::str::contains("name: xurl"))
-    .stdout(predicate::str::contains("# remote"));
-}
-
-#[test]
-fn skills_github_reports_candidate_uris_when_ambiguous() {
-    let temp = tempdir().expect("tempdir");
-    let remotes = temp.path().join("remotes");
-    setup_github_skill_remote(
-        &remotes,
-        "Xuanwo",
-        "xurl",
-        &[
-            ("skills/first/SKILL.md", "# first\n"),
-            ("skills/second/SKILL.md", "# second\n"),
-        ],
-    );
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env(
-        "XURL_SKILLS_GITHUB_BASE_URL",
-        format!("file://{}", remotes.display()),
-    )
-    .env("XURL_SKILLS_CACHE_ROOT", temp.path().join("cache"))
-    .arg("skills://github.com/Xuanwo/xurl")
-    .assert()
-    .failure()
-    .stderr(predicate::str::contains(
-        "choose one candidate URI and retry",
-    ))
-    .stderr(predicate::str::contains(
-        "skills://github.com/Xuanwo/xurl/skills/first",
-    ))
-    .stderr(predicate::str::contains(
-        "skills://github.com/Xuanwo/xurl/skills/second",
-    ));
 }
 
 #[test]

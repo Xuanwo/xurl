@@ -1,7 +1,16 @@
 [package]
 name = "xurl-core"
-version = "0.0.0-dev"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Core library for resolving and rendering AI agent URLs"
+documentation = "https://docs.rs/xurl-core"
+readme = "../README.md"
+keywords = ["agent", "url", "codex", "claude", "gemini"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 dirs = "6.0.0"

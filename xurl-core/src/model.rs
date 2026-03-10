@@ -43,39 +43,6 @@ pub struct ResolvedThread {
     pub metadata: ResolutionMeta,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SkillsSourceKind {
-    Local,
-    Github,
-}
-
-impl fmt::Display for SkillsSourceKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Local => write!(f, "local"),
-            Self::Github => write!(f, "github"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SkillResolutionMeta {
-    pub warnings: Vec<String>,
-    pub candidates: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedSkill {
-    pub uri: String,
-    pub source_kind: SkillsSourceKind,
-    pub skill_name: String,
-    pub source: String,
-    pub resolved_path: String,
-    pub content: String,
-    pub metadata: SkillResolutionMeta,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteRequest {
     pub prompt: String,

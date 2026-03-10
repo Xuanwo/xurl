@@ -10,12 +10,6 @@ pub enum XurlError {
     #[error("unsupported scheme: {0}")]
     UnsupportedScheme(String),
 
-    #[error("invalid skills uri: {0}")]
-    InvalidSkillsUri(String),
-
-    #[error("unsupported skills host: {0}")]
-    UnsupportedSkillsHost(String),
-
     #[error("invalid session id: {0}")]
     InvalidSessionId(String),
 
@@ -52,28 +46,6 @@ pub enum XurlError {
         provider: String,
         session_id: String,
         searched_roots: Vec<PathBuf>,
-    },
-
-    #[error("skill not found for uri={uri}")]
-    SkillNotFound { uri: String },
-
-    #[error("multiple skills matched for uri={uri}; choose one of: {candidates:?}")]
-    SkillSelectionRequired {
-        uri: String,
-        candidates: Vec<String>,
-    },
-
-    #[error("skill file is empty: {path}")]
-    EmptySkillFile { path: PathBuf },
-
-    #[error("skill file is not valid UTF-8: {path}")]
-    NonUtf8SkillFile { path: PathBuf },
-
-    #[error("git command failed: {command} (exit code: {code:?}): {stderr}")]
-    GitCommandFailed {
-        command: String,
-        code: Option<i32>,
-        stderr: String,
     },
 
     #[error("entry not found for provider={provider} session_id={session_id} entry_id={entry_id}")]

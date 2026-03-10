@@ -31,3 +31,33 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  package:
+    name: package xurl-core
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Inject synthetic release version into Cargo manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_cargo_release.py \
+            --version "0.0.0-ci.${{ github.run_number }}"
+
+      - name: Refresh lockfile for injected version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo package xurl-core
+        run: cargo package --allow-dirty --locked -p xurl-core

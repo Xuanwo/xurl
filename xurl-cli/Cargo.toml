@@ -1,7 +1,16 @@
 [package]
 name = "xurl-cli"
-version = "0.0.0-dev"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "CLI for reading and writing AI agent URLs"
+documentation = "https://docs.rs/xurl-cli"
+readme = "../README.md"
+keywords = ["agent", "url", "cli", "codex", "claude"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "xurl"
@@ -9,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5.48", features = ["derive"] }
-xurl-core = { path = "../xurl-core" }
+xurl-core = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = "2.0.17"

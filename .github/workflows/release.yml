@@ -66,6 +66,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Inject release version into Cargo manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_cargo_release.py \
+            --version "${{ needs.validate-tag.outputs.version }}"
+
+      - name: Refresh lockfile for injected version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -200,3 +213,125 @@ jobs:
             dist/release/checksums.txt
             dist/release/manifest.json
           overwrite_files: true
+
+  publish-crates:
+    name: Publish crates.io packages
+    runs-on: ubuntu-latest
+    needs:
+      - validate-tag
+      - publish-release
+    environment:
+      name: crates-io
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      RELEASE_VERSION: ${{ needs.validate-tag.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Inject release version into Cargo manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_cargo_release.py --version "${RELEASE_VERSION}"
+
+      - name: Refresh lockfile for injected version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Authenticate with crates.io
+        id: crates-auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Verify publishable packages
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          cargo package --allow-dirty --locked -p xurl-core
+
+      - name: Publish xurl-core
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          publish_output="$(mktemp)"
+          if cargo publish --allow-dirty --locked -p xurl-core >"${publish_output}" 2>&1; then
+            cat "${publish_output}"
+            exit 0
+          fi
+
+          cat "${publish_output}"
+          if grep -qiE "already uploaded|already exists|previously uploaded" "${publish_output}"; then
+            echo "xurl-core ${RELEASE_VERSION} is already published."
+            exit 0
+          fi
+          exit 1
+
+      - name: Wait for xurl-core index visibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import time
+          import urllib.request
+
+          crate = "xurl-core"
+          version = os.environ["RELEASE_VERSION"]
+          deadline = time.time() + 600
+          url = f"https://crates.io/api/v1/crates/{crate}"
+
+          while time.time() < deadline:
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  payload = json.load(response)
+              versions = [item["num"] for item in payload["versions"]]
+              if version in versions:
+                  print(f"{crate} {version} is visible in crates.io index.")
+                  sys.exit(0)
+              print(f"Waiting for {crate} {version} to appear on crates.io...")
+              time.sleep(10)
+
+          raise SystemExit(f"Timed out waiting for {crate} {version} to appear on crates.io")
+          PY
+
+      - name: Verify xurl-cli after xurl-core is visible
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          cargo package --allow-dirty --locked -p xurl-cli
+
+      - name: Publish xurl-cli
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          publish_output="$(mktemp)"
+          if cargo publish --allow-dirty --locked -p xurl-cli >"${publish_output}" 2>&1; then
+            cat "${publish_output}"
+            exit 0
+          fi
+
+          cat "${publish_output}"
+          if grep -qiE "already uploaded|already exists|previously uploaded" "${publish_output}"; then
+            echo "xurl-cli ${RELEASE_VERSION} is already published."
+            exit 0
+          fi
+          exit 1
