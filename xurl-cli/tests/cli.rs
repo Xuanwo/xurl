@@ -31,6 +31,7 @@ const OPENCODE_REAL_SESSION_ID: &str = "ses_7v2md9kx3c1p";
 const OPENCODE_MAIN_SESSION_ID: &str = "ses_5x7md9kx3c1p";
 const OPENCODE_CHILD_SESSION_ID: &str = "ses_5x7md9kx3c2p";
 const OPENCODE_CHILD_EMPTY_SESSION_ID: &str = "ses_5x7md9kx3c3p";
+const OPENCLAW_SESSION_ID: &str = "0139048b-6a00-4636-8125-336ba5ed1cf9";
 
 fn setup_codex_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
@@ -67,6 +68,7 @@ fn setup_codex_role_query_tree() -> tempfile::TempDir {
     temp
 }
 
+#[cfg(unix)]
 fn setup_codex_role_configs(root: &Path) {
     fs::write(
         root.join("config.toml"),
@@ -490,6 +492,25 @@ fn setup_opencode_subagent_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_openclaw_tree() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let session_path = temp.path().join(format!(
+        ".openclaw/agents/primary/sessions/{OPENCLAW_SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(session_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &session_path,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"{OPENCLAW_SESSION_ID}\",\"timestamp\":\"2026-03-09T09:34:19.978Z\",\"cwd\":\"/tmp/openclaw\"}}\n\
+{{\"type\":\"message\",\"id\":\"m1\",\"parentId\":null,\"timestamp\":\"2026-03-09T09:34:20.014Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello from openclaw\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"m2\",\"parentId\":\"m1\",\"timestamp\":\"2026-03-09T09:34:21.014Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"thinking\",\"thinking\":\"step by step\"}},{{\"type\":\"toolCall\",\"id\":\"call_1\",\"name\":\"exec\",\"arguments\":{{\"command\":\"echo hi\"}}}},{{\"type\":\"text\",\"text\":\"openclaw done\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"m3\",\"parentId\":\"m2\",\"timestamp\":\"2026-03-09T09:34:22.014Z\",\"message\":{{\"role\":\"toolResult\",\"content\":[{{\"type\":\"text\",\"text\":\"tool output\"}}]}}}}\n"
+        ),
+    )
+    .expect("write openclaw session");
+    temp
+}
+
 fn codex_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex_real_sanitized")
 }
@@ -720,6 +741,7 @@ fn path_with_mock(mock_root: &std::path::Path) -> String {
     format!("{}:{current}", mock_root.display())
 }
 
+#[cfg(unix)]
 fn encode_query_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -1090,6 +1112,23 @@ fn opencode_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains("# Threads"))
         .stdout(predicate::str::contains("- Limit: `1`"))
         .stdout(predicate::str::contains("agents://opencode/"))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn openclaw_collection_query_outputs_markdown() {
+    let temp = setup_openclaw_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg("agents://openclaw?q=openclaw&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://openclaw/{OPENCLAW_SESSION_ID}"
+        )))
         .stdout(predicate::str::contains("- Match:"));
 }
 
@@ -1803,6 +1842,55 @@ fn opencode_subagent_not_found_outputs_markdown_view() {
         .stdout(predicate::str::contains(format!(
             "agent not found for main_session_id={OPENCODE_MAIN_SESSION_ID} agent_id={missing_child}"
         )));
+}
+
+#[test]
+fn openclaw_read_outputs_markdown() {
+    let temp = setup_openclaw_tree();
+    let uri = format!("openclaw://{OPENCLAW_SESSION_ID}");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg(&uri)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("hello from openclaw"))
+        .stdout(predicate::str::contains("## 2. Assistant"))
+        .stdout(predicate::str::contains("openclaw done"));
+}
+
+#[test]
+fn openclaw_head_outputs_thread_mode() {
+    let temp = setup_openclaw_tree();
+    let uri = format!("openclaw://{OPENCLAW_SESSION_ID}");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg(&uri)
+        .arg("-I")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("---\n"))
+        .stdout(predicate::str::contains("mode: 'thread'"))
+        .stdout(predicate::str::contains("subagents:").not())
+        .stdout(predicate::str::contains("# Thread").not());
+}
+
+#[test]
+fn openclaw_child_uri_is_rejected() {
+    let temp = setup_openclaw_tree();
+    let uri = format!("agents://openclaw/{OPENCLAW_SESSION_ID}/child");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg(&uri)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "openclaw does not support child thread URI",
+        ));
 }
 
 #[test]

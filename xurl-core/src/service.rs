@@ -499,8 +499,7 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
             | ProviderKind::Codex
             | ProviderKind::Claude
             | ProviderKind::Gemini
-            | ProviderKind::Opencode
-            | ProviderKind::Openclaw,
+            | ProviderKind::Opencode,
             None,
         ) => {
             let resolved_main = resolve_thread(uri, roots)?;
@@ -520,6 +519,16 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
             }
 
             render_warnings(&mut output, &warnings);
+        }
+        (ProviderKind::Openclaw, None) => {
+            let resolved = resolve_thread(uri, roots)?;
+            push_yaml_string(
+                &mut output,
+                "thread_source",
+                &resolved.path.display().to_string(),
+            );
+            push_yaml_string(&mut output, "mode", "thread");
+            render_warnings(&mut output, &resolved.metadata.warnings);
         }
         (ProviderKind::Pi, None) => {
             let resolved = resolve_thread(uri, roots)?;
@@ -546,8 +555,7 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
             | ProviderKind::Codex
             | ProviderKind::Claude
             | ProviderKind::Gemini
-            | ProviderKind::Opencode
-            | ProviderKind::Openclaw,
+            | ProviderKind::Opencode,
             Some(_),
         ) => {
             let main_uri = main_thread_uri(uri);
@@ -591,6 +599,12 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
 
                 render_warnings(&mut output, &detail.warnings);
             }
+        }
+        (ProviderKind::Openclaw, Some(_)) => {
+            return Err(XurlError::InvalidMode(
+                "openclaw does not support child thread URI: agents://openclaw/<session_id>/<child_id>"
+                    .to_string(),
+            ));
         }
         (ProviderKind::Pi, Some(agent_id)) if is_uuid_session_id(agent_id) => {
             let main_uri = main_thread_uri(uri);
@@ -4062,50 +4076,48 @@ fn collect_openclaw_query_candidates(
     warnings: &mut Vec<String>,
     _with_search_text: bool,
 ) -> Result<Vec<QueryCandidate>> {
-    let sessions_dir = roots.openclaw_root.join("data/sessions");
-    if !sessions_dir.exists() {
-        return Ok(Vec::new());
-    }
-
     let mut candidates = Vec::new();
-    for entry in WalkDir::new(&sessions_dir)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = entry.into_path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-
-        let Some(session_id) = path.file_stem().and_then(|name| name.to_str()) else {
-            warnings.push(format!(
-                "skipped openclaw session with invalid filename: {}",
-                path.display()
-            ));
-            continue;
-        };
-
-        if AgentsUri::parse(&format!("openclaw://{session_id}")).is_err() {
-            warnings.push(format!(
-                "skipped openclaw session with invalid id={session_id} from {}",
-                path.display()
-            ));
-            continue;
-        }
-
-        candidates.push(QueryCandidate {
-            thread_id: session_id.to_string(),
-            uri: format!("agents://openclaw/{session_id}"),
-            thread_source: path.display().to_string(),
-            updated_at: modified_timestamp_string(&path),
-            updated_epoch: file_modified_epoch(&path),
-            search_target: QuerySearchTarget::Text(String::new()),
-        });
-    }
-
+    candidates.extend(collect_simple_file_candidates(
+        ProviderKind::Openclaw,
+        &roots.openclaw_root.join("agents"),
+        |path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext == "jsonl")
+                && path
+                    .parent()
+                    .and_then(|parent| parent.file_name())
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name == "sessions")
+        },
+        |path| {
+            let session_id = path.file_stem()?.to_str()?;
+            if is_uuid_session_id(session_id) {
+                Some(session_id.to_ascii_lowercase())
+            } else {
+                None
+            }
+        },
+        warnings,
+    ));
+    candidates.extend(collect_simple_file_candidates(
+        ProviderKind::Openclaw,
+        &roots.openclaw_root.join("data/sessions"),
+        |path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext == "json")
+        },
+        |path| {
+            let session_id = path.file_stem()?.to_str()?;
+            if is_uuid_session_id(session_id) {
+                Some(session_id.to_ascii_lowercase())
+            } else {
+                None
+            }
+        },
+        warnings,
+    ));
     Ok(candidates)
 }
 

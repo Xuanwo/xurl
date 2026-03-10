@@ -269,6 +269,7 @@ Role create behavior by provider:
 - `codex`: supported (`[agents.<role>]` in `~/.codex/config.toml` mapped to `--config`)
 - `claude`: supported (`--agent <role>`)
 - `opencode`: supported (`--agent <role>`)
+- `openclaw`: supported (`--agent <role>`)
 - `amp`: returns clear error (non-interactive role create unsupported)
 - `gemini`: returns clear error (non-interactive role create unsupported)
 - `pi`: returns clear error (role create unsupported)

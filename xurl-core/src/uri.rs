@@ -299,6 +299,7 @@ impl FromStr for AgentsUri {
             | ProviderKind::Claude
             | ProviderKind::Gemini
             | ProviderKind::Pi
+            | ProviderKind::Openclaw
                 if !is_uuid_session_id(raw_id) =>
             {
                 return Err(XurlError::InvalidSessionId(raw_id.to_string()));
@@ -321,8 +322,9 @@ impl FromStr for AgentsUri {
             ProviderKind::Codex
             | ProviderKind::Claude
             | ProviderKind::Gemini
-            | ProviderKind::Pi => raw_id.to_ascii_lowercase(),
-            ProviderKind::Opencode | ProviderKind::Openclaw => raw_id.to_string(),
+            | ProviderKind::Pi
+            | ProviderKind::Openclaw => raw_id.to_ascii_lowercase(),
+            ProviderKind::Opencode => raw_id.to_string(),
         };
 
         let agent_id = raw_agent_id.map(|agent_id| {
@@ -453,7 +455,8 @@ fn looks_like_session_id(provider: ProviderKind, token: &str) -> bool {
         ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini | ProviderKind::Pi => {
             is_uuid_session_id(token)
         }
-        ProviderKind::Opencode | ProviderKind::Openclaw => OPENCODE_SESSION_ID_RE.is_match(token),
+        ProviderKind::Openclaw => is_uuid_session_id(token),
+        ProviderKind::Opencode => OPENCODE_SESSION_ID_RE.is_match(token),
     }
 }
 
@@ -929,6 +932,22 @@ mod tests {
         assert_eq!(uri.provider, ProviderKind::Opencode);
         assert_eq!(uri.session_id, "ses_43a90e3adffejRgrTdlJa48CtE");
         assert_eq!(uri.agent_id, None);
+    }
+
+    #[test]
+    fn parse_valid_openclaw_uri() {
+        let uri = AgentsUri::parse("openclaw://0139048B-6A00-4636-8125-336BA5ED1CF9")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Openclaw);
+        assert_eq!(uri.session_id, "0139048b-6a00-4636-8125-336ba5ed1cf9");
+        assert_eq!(uri.agent_id, None);
+    }
+
+    #[test]
+    fn parse_rejects_invalid_session_id_for_openclaw() {
+        let err = AgentsUri::parse("openclaw://ses_43a90e3adffejRgrTdlJa48CtE")
+            .expect_err("must reject non-uuid session id");
+        assert!(format!("{err}").contains("invalid session id"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde::Deserialize;
@@ -11,6 +11,11 @@ use crate::error::{Result, XurlError};
 use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
 use crate::provider::{Provider, WriteEventSink, append_passthrough_args};
 
+#[derive(Debug, Clone)]
+pub struct OpenClawProvider {
+    root: PathBuf,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct OpenClawSessionEntry {
     role: String,
@@ -18,8 +23,9 @@ struct OpenClawSessionEntry {
 }
 
 #[derive(Debug, Clone)]
-pub struct OpenClawProvider {
-    root: PathBuf,
+enum OpenClawSessionSource {
+    Jsonl(PathBuf),
+    LegacyJson(PathBuf),
 }
 
 impl OpenClawProvider {
@@ -28,11 +34,19 @@ impl OpenClawProvider {
     }
 
     fn sessions_dir(&self) -> PathBuf {
+        self.root.join("agents")
+    }
+
+    fn legacy_sessions_dir(&self) -> PathBuf {
         self.root.join("data/sessions")
     }
 
+    #[cfg(test)]
     fn session_path(&self, session_id: &str) -> PathBuf {
-        self.sessions_dir().join(format!("{session_id}.json"))
+        self.sessions_dir()
+            .join("main")
+            .join("sessions")
+            .join(format!("{session_id}.jsonl"))
     }
 
     fn materialized_path(&self, session_id: &str) -> PathBuf {
@@ -46,25 +60,94 @@ impl OpenClawProvider {
             .join(format!("{session_id}.jsonl"))
     }
 
-    fn load_session_entries(&self, session_id: &str) -> Result<Vec<OpenClawSessionEntry>> {
-        let path = self.session_path(session_id);
-        if !path.exists() {
-            return Err(XurlError::ThreadNotFound {
-                provider: ProviderKind::Openclaw.to_string(),
-                session_id: session_id.to_string(),
-                searched_roots: vec![path],
-            });
+    fn collect_sessions_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        let agents_root = self.sessions_dir();
+        dirs.push(agents_root.join("main").join("sessions"));
+
+        if let Ok(entries) = fs::read_dir(&agents_root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path.join("sessions"));
+                }
+            }
         }
 
-        let content = fs::read_to_string(&path).map_err(|source| XurlError::Io {
-            path: path.clone(),
+        dirs.sort();
+        dirs.dedup();
+        dirs
+    }
+
+    fn find_case_insensitive_file(dir: &Path, session_id: &str, ext: &str) -> Option<PathBuf> {
+        let entries = fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(candidate_ext) = path.extension().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if !candidate_ext.eq_ignore_ascii_case(ext) {
+                continue;
+            }
+            let Some(candidate_id) = path.file_stem().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if candidate_id.eq_ignore_ascii_case(session_id) {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    fn find_jsonl_session_path(
+        &self,
+        session_id: &str,
+        searched: &mut Vec<PathBuf>,
+    ) -> Option<PathBuf> {
+        let dirs = self.collect_sessions_dirs();
+        for dir in &dirs {
+            let path = dir.join(format!("{session_id}.jsonl"));
+            searched.push(path.clone());
+            if path.exists() {
+                return Some(path);
+            }
+        }
+
+        for dir in &dirs {
+            if let Some(path) = Self::find_case_insensitive_file(dir, session_id, "jsonl") {
+                return Some(path);
+            }
+        }
+
+        None
+    }
+
+    fn find_legacy_session_path(
+        &self,
+        session_id: &str,
+        searched: &mut Vec<PathBuf>,
+    ) -> Option<PathBuf> {
+        let dir = self.legacy_sessions_dir();
+        let path = dir.join(format!("{session_id}.json"));
+        searched.push(path.clone());
+        if path.exists() {
+            return Some(path);
+        }
+        Self::find_case_insensitive_file(&dir, session_id, "json")
+    }
+
+    fn load_session_entries(&self, session_path: &Path) -> Result<Vec<OpenClawSessionEntry>> {
+        let content = fs::read_to_string(session_path).map_err(|source| XurlError::Io {
+            path: session_path.to_path_buf(),
             source,
         })?;
 
-        // Session JSON is an array of entries
         let entries: Vec<OpenClawSessionEntry> =
             serde_json::from_str(&content).map_err(|source| XurlError::InvalidJsonLine {
-                path: path.clone(),
+                path: session_path.to_path_buf(),
                 line: 1,
                 source,
             })?;
@@ -76,14 +159,13 @@ impl OpenClawProvider {
         let mut lines = Vec::with_capacity(entries.len() + 1);
         lines.push(json!({
             "type": "session",
-            "sessionId": session_id,
+            "id": session_id,
         }));
 
         for entry in entries {
             lines.push(json!({
                 "type": "message",
                 "id": format!("msg_{}", entry.role),
-                "sessionId": session_id,
                 "message": {
                     "role": entry.role,
                     "content": entry.content,
@@ -99,6 +181,16 @@ impl OpenClawProvider {
             output.push('\n');
         }
         output
+    }
+
+    fn find_session_source(&self, session_id: &str, searched: &mut Vec<PathBuf>) -> Option<OpenClawSessionSource> {
+        if let Some(path) = self.find_jsonl_session_path(session_id, searched) {
+            return Some(OpenClawSessionSource::Jsonl(path));
+        }
+        if let Some(path) = self.find_legacy_session_path(session_id, searched) {
+            return Some(OpenClawSessionSource::LegacyJson(path));
+        }
+        None
     }
 
     fn openclaw_bin() -> String {
@@ -159,6 +251,7 @@ impl OpenClawProvider {
             .get("sessionID")
             .and_then(Value::as_str)
             .or_else(|| value.get("sessionId").and_then(Value::as_str))
+            .or_else(|| value.get("session_id").and_then(Value::as_str))
     }
 
     fn extract_delta_text(value: &Value) -> Option<String> {
@@ -339,32 +432,52 @@ impl Provider for OpenClawProvider {
     }
 
     fn resolve(&self, session_id: &str) -> Result<ResolvedThread> {
-        let entries = self.load_session_entries(session_id)?;
-        let raw = Self::render_jsonl(session_id, entries);
-        let path = self.materialized_path(session_id);
+        let mut searched = Vec::new();
+        match self.find_session_source(session_id, &mut searched) {
+            Some(OpenClawSessionSource::Jsonl(path)) => Ok(ResolvedThread {
+                provider: ProviderKind::Openclaw,
+                session_id: session_id.to_string(),
+                path,
+                metadata: ResolutionMeta {
+                    source: "openclaw:jsonl".to_string(),
+                    candidate_count: 1,
+                    warnings: Vec::new(),
+                },
+            }),
+            Some(OpenClawSessionSource::LegacyJson(path)) => {
+                let entries = self.load_session_entries(&path)?;
+                let raw = Self::render_jsonl(session_id, entries);
+                let path = self.materialized_path(session_id);
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| XurlError::Io {
-                path: parent.to_path_buf(),
-                source,
-            })?;
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).map_err(|source| XurlError::Io {
+                        path: parent.to_path_buf(),
+                        source,
+                    })?;
+                }
+
+                fs::write(&path, raw).map_err(|source| XurlError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
+
+                Ok(ResolvedThread {
+                    provider: ProviderKind::Openclaw,
+                    session_id: session_id.to_string(),
+                    path,
+                    metadata: ResolutionMeta {
+                        source: "openclaw:json".to_string(),
+                        candidate_count: 1,
+                        warnings: Vec::new(),
+                    },
+                })
+            }
+            None => Err(XurlError::ThreadNotFound {
+                provider: ProviderKind::Openclaw.to_string(),
+                session_id: session_id.to_string(),
+                searched_roots: searched,
+            }),
         }
-
-        fs::write(&path, raw).map_err(|source| XurlError::Io {
-            path: path.clone(),
-            source,
-        })?;
-
-        Ok(ResolvedThread {
-            provider: ProviderKind::Openclaw,
-            session_id: session_id.to_string(),
-            path,
-            metadata: ResolutionMeta {
-                source: "openclaw:json".to_string(),
-                candidate_count: 1,
-                warnings: Vec::new(),
-            },
-        })
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
@@ -392,37 +505,40 @@ impl Provider for OpenClawProvider {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use tempfile::tempdir;
 
     use crate::provider::Provider;
     use crate::provider::openclaw::OpenClawProvider;
 
-    fn prepare_session_file(path: &Path, session_id: &str) {
-        let sessions_dir = path.join("data/sessions");
+    fn prepare_jsonl_session_file(path: &Path, agent_id: &str, session_id: &str) -> PathBuf {
+        let sessions_dir = path.join(format!("agents/{agent_id}/sessions"));
         fs::create_dir_all(&sessions_dir).expect("create sessions dir");
-        let session_path = sessions_dir.join(format!("{session_id}.json"));
+        let session_path = sessions_dir.join(format!("{session_id}.jsonl"));
 
-        let entries = r#"[
-            {"role": "user", "content": "hello", "timestamp": "2024-01-01T00:00:01Z"},
-            {"role": "assistant", "content": "world", "timestamp": "2024-01-01T00:00:02Z"}
-        ]"#;
-        fs::write(&session_path, entries).expect("write session file");
+        fs::write(
+            &session_path,
+            format!(
+                "{{\"type\":\"session\",\"id\":\"{session_id}\"}}\n{{\"type\":\"message\",\"id\":\"m1\",\"parentId\":null,\"timestamp\":\"2026-03-09T09:34:20.014Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello\"}}]}}}}\n{{\"type\":\"message\",\"id\":\"m2\",\"parentId\":\"m1\",\"timestamp\":\"2026-03-09T09:34:21.014Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"world\"}}]}}}}\n"
+            ),
+        )
+        .expect("write session file");
+        session_path
     }
 
     #[test]
-    fn resolves_from_json_session_file() {
+    fn resolves_from_jsonl_session_file() {
         let temp = tempdir().expect("tempdir");
-        let session_id = "test_session_123";
-        prepare_session_file(temp.path(), session_id);
+        let session_id = "0139048b-6a00-4636-8125-336ba5ed1cf9";
+        prepare_jsonl_session_file(temp.path(), "primary", session_id);
 
         let provider = OpenClawProvider::new(temp.path());
         let resolved = provider
             .resolve(session_id)
             .expect("resolve should succeed");
 
-        assert_eq!(resolved.metadata.source, "openclaw:json");
+        assert_eq!(resolved.metadata.source, "openclaw:jsonl");
         assert!(resolved.path.exists());
 
         let raw = fs::read_to_string(&resolved.path).expect("read materialized");
@@ -433,27 +549,63 @@ mod tests {
     }
 
     #[test]
+    fn resolves_from_legacy_json_session_file() {
+        let temp = tempdir().expect("tempdir");
+        let session_id = "0139048b-6a00-4636-8125-336ba5ed1cf9";
+        let sessions_dir = temp.path().join("data/sessions");
+        fs::create_dir_all(&sessions_dir).expect("create legacy sessions dir");
+        let session_path = sessions_dir.join(format!("{session_id}.json"));
+        let legacy_entries = r#"[
+            {"role": "user", "content": "hello", "timestamp": "2024-01-01T00:00:01Z"},
+            {"role": "assistant", "content": "world", "timestamp": "2024-01-01T00:00:02Z"}
+        ]"#;
+        fs::write(&session_path, legacy_entries).expect("write legacy session file");
+
+        let provider = OpenClawProvider::new(temp.path());
+        let resolved = provider
+            .resolve(session_id)
+            .expect("resolve should succeed");
+
+        assert_eq!(resolved.metadata.source, "openclaw:json");
+        assert!(resolved.path.exists());
+        let raw = fs::read_to_string(&resolved.path).expect("read materialized");
+        assert!(raw.contains(r#""type":"session""#));
+        assert!(raw.contains(r#""type":"message""#));
+        assert!(raw.contains(r#""role":"user""#));
+        assert!(raw.contains(r#""role":"assistant""#));
+    }
+
+    #[test]
+    fn resolves_case_insensitive_session_id() {
+        let temp = tempdir().expect("tempdir");
+        let session_id = "0139048b-6a00-4636-8125-336ba5ed1cf9";
+        let upper_session_id = session_id.to_ascii_uppercase();
+        prepare_jsonl_session_file(temp.path(), "alpha", &upper_session_id);
+
+        let provider = OpenClawProvider::new(temp.path());
+        let resolved = provider
+            .resolve(session_id)
+            .expect("resolve should succeed");
+
+        assert!(resolved.path.exists());
+    }
+
+    #[test]
     fn returns_not_found_when_session_file_missing() {
         let temp = tempdir().expect("tempdir");
         let provider = OpenClawProvider::new(temp.path());
         let err = provider
-            .resolve("nonexistent_session")
+            .resolve("00000000-0000-4000-8000-000000000000")
             .expect_err("must fail");
         assert!(format!("{err}").contains("thread not found"));
     }
 
     #[test]
-    fn materialized_paths_are_isolated_by_root() {
-        let first_root = tempdir().expect("first tempdir");
-        let second_root = tempdir().expect("second tempdir");
-        let first = OpenClawProvider::new(first_root.path());
-        let second = OpenClawProvider::new(second_root.path());
-        let session_id = "test_session_123";
-
-        let first_path = first.materialized_path(session_id);
-        let second_path = second.materialized_path(session_id);
-
-        assert_ne!(first_path, second_path);
+    fn session_path_uses_openclaw_jsonl_layout() {
+        let temp = tempdir().expect("tempdir");
+        let provider = OpenClawProvider::new(temp.path());
+        let path = provider.session_path("0139048b-6a00-4636-8125-336ba5ed1cf9");
+        assert!(path.ends_with("agents/main/sessions/0139048b-6a00-4636-8125-336ba5ed1cf9.jsonl"));
     }
 }
 
