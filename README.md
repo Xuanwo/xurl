@@ -139,7 +139,7 @@ xurl [OPTIONS] <URI>
 - `scheme`: optional `agents://` prefix. If omitted, `xurl` treats input as an `agents` URI shorthand.
 - `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`, `openclaw`.
 - `token`: main conversation identifier or role name.
-- `child_id`: child/subagent identifier under a main conversation (OpenClaw uses the agent id).
+- `child_id`: child/subagent identifier under a main conversation.
 - `query`: optional key-value parameters, interpreted by context.
 
 ### Agents Query

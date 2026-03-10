@@ -68,7 +68,6 @@ fn setup_codex_role_query_tree() -> tempfile::TempDir {
     temp
 }
 
-#[cfg(unix)]
 fn setup_codex_role_configs(root: &Path) {
     fs::write(
         root.join("config.toml"),
@@ -664,7 +663,6 @@ fn path_with_mock(mock_root: &std::path::Path) -> String {
     format!("{}:{current}", mock_root.display())
 }
 
-#[cfg(unix)]
 fn encode_query_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
