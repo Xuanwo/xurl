@@ -462,10 +462,14 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                 "thread_source",
                 &resolved_main.path.display().to_string(),
             );
+            let (thread_metadata, metadata_warnings) =
+                collect_thread_metadata(uri.provider, &resolved_main.path);
+            render_thread_metadata(&mut output, &thread_metadata);
             push_yaml_string(&mut output, "mode", "subagent_index");
 
             let view = resolve_subagent_view(uri, roots, true)?;
             let mut warnings = resolved_main.metadata.warnings.clone();
+            warnings.extend(metadata_warnings);
 
             if let SubagentView::List(list) = view {
                 render_subagents_head(&mut output, &list);
@@ -481,11 +485,16 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                 "thread_source",
                 &resolved.path.display().to_string(),
             );
+            let (thread_metadata, metadata_warnings) =
+                collect_thread_metadata(uri.provider, &resolved.path);
+            render_thread_metadata(&mut output, &thread_metadata);
             push_yaml_string(&mut output, "mode", "pi_entry_index");
 
             let list = resolve_pi_entry_list_view(uri, roots)?;
             render_pi_entries_head(&mut output, &list);
-            let mut warnings = list.warnings;
+            let mut warnings = resolved.metadata.warnings.clone();
+            warnings.extend(metadata_warnings);
+            warnings.extend(list.warnings);
 
             if let SubagentView::List(subagents) = resolve_subagent_view(uri, roots, true)? {
                 render_subagents_head(&mut output, &subagents);
@@ -513,7 +522,10 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                     .and_then(|thread| thread.path.as_deref())
                     .map(ToString::to_string)
                     .unwrap_or_else(|| resolved_main.path.display().to_string());
+                let (thread_metadata, metadata_warnings) =
+                    collect_thread_metadata(uri.provider, Path::new(&thread_source));
                 push_yaml_string(&mut output, "thread_source", &thread_source);
+                render_thread_metadata(&mut output, &thread_metadata);
                 push_yaml_string(&mut output, "mode", "subagent_detail");
 
                 if let Some(agent_id) = &detail.query.agent_id {
@@ -541,7 +553,9 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                     }
                 }
 
-                render_warnings(&mut output, &detail.warnings);
+                let mut warnings = detail.warnings.clone();
+                warnings.extend(metadata_warnings);
+                render_warnings(&mut output, &warnings);
             }
         }
         (ProviderKind::Pi, Some(agent_id)) if is_uuid_session_id(agent_id) => {
@@ -556,7 +570,10 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                     .and_then(|thread| thread.path.as_deref())
                     .map(ToString::to_string)
                     .unwrap_or_else(|| resolved_main.path.display().to_string());
+                let (thread_metadata, metadata_warnings) =
+                    collect_thread_metadata(uri.provider, Path::new(&thread_source));
                 push_yaml_string(&mut output, "thread_source", &thread_source);
+                render_thread_metadata(&mut output, &thread_metadata);
                 push_yaml_string(&mut output, "mode", "subagent_detail");
                 push_yaml_string(&mut output, "agent_id", agent_id);
                 push_yaml_string(
@@ -577,18 +594,26 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                     }
                 }
 
-                render_warnings(&mut output, &detail.warnings);
+                let mut warnings = detail.warnings.clone();
+                warnings.extend(metadata_warnings);
+                render_warnings(&mut output, &warnings);
             }
         }
         (ProviderKind::Pi, Some(entry_id)) => {
             let resolved = resolve_thread(uri, roots)?;
+            let (thread_metadata, metadata_warnings) =
+                collect_thread_metadata(uri.provider, &resolved.path);
             push_yaml_string(
                 &mut output,
                 "thread_source",
                 &resolved.path.display().to_string(),
             );
+            render_thread_metadata(&mut output, &thread_metadata);
             push_yaml_string(&mut output, "mode", "pi_entry");
             push_yaml_string(&mut output, "entry_id", entry_id);
+            let mut warnings = resolved.metadata.warnings.clone();
+            warnings.extend(metadata_warnings);
+            render_warnings(&mut output, &warnings);
         }
     }
 
@@ -643,6 +668,301 @@ fn render_warnings(output: &mut String, warnings: &[String]) {
     output.push_str("warnings:\n");
     for warning in unique {
         output.push_str(&format!("  - '{}'\n", yaml_single_quoted(&warning)));
+    }
+}
+
+fn render_thread_metadata(output: &mut String, metadata: &[String]) {
+    if metadata.is_empty() {
+        return;
+    }
+
+    output.push_str("thread_metadata:\n");
+    for value in metadata {
+        output.push_str(&format!("  - '{}'\n", yaml_single_quoted(value)));
+    }
+}
+
+fn collect_thread_metadata(provider: ProviderKind, path: &Path) -> (Vec<String>, Vec<String>) {
+    let raw = match read_thread_raw(path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            return (
+                Vec::new(),
+                vec![format!(
+                    "failed reading thread metadata {}: {err}",
+                    path.display()
+                )],
+            );
+        }
+    };
+
+    match provider {
+        ProviderKind::Amp => collect_amp_thread_metadata(path, &raw),
+        ProviderKind::Codex => collect_codex_thread_metadata(path, &raw),
+        ProviderKind::Claude => collect_claude_thread_metadata(path, &raw),
+        ProviderKind::Gemini => collect_gemini_thread_metadata(path, &raw),
+        ProviderKind::Pi => collect_pi_thread_metadata(path, &raw),
+        ProviderKind::Opencode => collect_opencode_thread_metadata(path, &raw),
+    }
+}
+
+fn collect_codex_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing codex metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        match value.get("type").and_then(Value::as_str) {
+            Some("session_meta") | Some("turn_context") => {
+                push_thread_metadata_record(&mut metadata, &mut seen, &value);
+            }
+            _ => {}
+        }
+    }
+
+    (metadata, warnings)
+}
+
+fn collect_claude_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing claude metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        if looks_like_claude_metadata(&value) {
+            let mut metadata_value = value;
+            if let Some(object) = metadata_value.as_object_mut() {
+                object.remove("message");
+            }
+            push_thread_metadata_record(&mut metadata, &mut seen, &metadata_value);
+            break;
+        }
+    }
+
+    (metadata, warnings)
+}
+
+fn collect_pi_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing pi metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        match value.get("type").and_then(Value::as_str) {
+            Some("session") | Some("model_change") | Some("thinking_level_change") => {
+                push_thread_metadata_record(&mut metadata, &mut seen, &value);
+            }
+            _ => {}
+        }
+    }
+
+    (metadata, warnings)
+}
+
+fn collect_amp_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    collect_json_object_thread_metadata(path, raw, ProviderKind::Amp, &["messages"])
+}
+
+fn collect_gemini_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    collect_json_object_thread_metadata(path, raw, ProviderKind::Gemini, &["messages"])
+}
+
+fn collect_opencode_thread_metadata(_path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    if let Some(first_non_empty) = raw.lines().find(|line| !line.trim().is_empty())
+        && let Ok(value) = serde_json::from_str::<Value>(first_non_empty)
+        && value.get("type").and_then(Value::as_str) == Some("session")
+    {
+        push_thread_metadata_record(&mut metadata, &mut seen, &value);
+    }
+
+    (metadata, Vec::new())
+}
+
+fn collect_json_object_thread_metadata(
+    path: &Path,
+    raw: &str,
+    provider: ProviderKind,
+    strip_keys: &[&str],
+) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+    let value = match serde_json::from_str::<Value>(raw) {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                metadata,
+                vec![format!(
+                    "failed parsing {provider} metadata payload {}: {err}",
+                    path.display()
+                )],
+            );
+        }
+    };
+
+    let mut metadata_value = value;
+    if let Some(object) = metadata_value.as_object_mut() {
+        for key in strip_keys {
+            object.remove(*key);
+        }
+    }
+
+    if !metadata_value.is_null() {
+        let should_emit = metadata_value
+            .as_object()
+            .is_none_or(|object| !object.is_empty());
+        if should_emit {
+            push_thread_metadata_record(&mut metadata, &mut seen, &metadata_value);
+        }
+    }
+
+    (metadata, Vec::new())
+}
+
+fn looks_like_claude_metadata(value: &Value) -> bool {
+    value.get("cwd").is_some()
+        || value.get("gitBranch").is_some()
+        || value.get("version").is_some()
+        || value.get("sessionId").is_some()
+        || value.get("agentId").is_some()
+        || value.get("isSidechain").is_some()
+}
+
+fn push_thread_metadata_record(
+    metadata: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    value: &Value,
+) {
+    flatten_thread_metadata_value(metadata, seen, None, value);
+}
+
+fn flatten_thread_metadata_value(
+    metadata: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    path: Option<&str>,
+    value: &Value,
+) {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            let Some(path) = path else {
+                return;
+            };
+            let entry = format!("{path} = {}", format_thread_metadata_value(value));
+            if seen.insert(entry.clone()) {
+                metadata.push(entry);
+            }
+        }
+        Value::Array(items) => {
+            let Some(path) = path else {
+                return;
+            };
+            if items.is_empty() {
+                let entry = format!("{path} = []");
+                if seen.insert(entry.clone()) {
+                    metadata.push(entry);
+                }
+                return;
+            }
+
+            for (index, item) in items.iter().enumerate() {
+                let child_path = format!("{path}[{index}]");
+                flatten_thread_metadata_value(metadata, seen, Some(&child_path), item);
+            }
+        }
+        Value::Object(map) => {
+            if map.is_empty() {
+                if let Some(path) = path {
+                    let entry = format!("{path} = {{}}");
+                    if seen.insert(entry.clone()) {
+                        metadata.push(entry);
+                    }
+                }
+                return;
+            }
+
+            for (key, child) in map {
+                let child_path = match path {
+                    Some(path) => format!("{path}.{key}"),
+                    None => key.clone(),
+                };
+                flatten_thread_metadata_value(metadata, seen, Some(&child_path), child);
+            }
+        }
+    }
+}
+
+fn format_thread_metadata_value(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => format_thread_metadata_string(text),
+        Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+    }
+}
+
+fn format_thread_metadata_string(text: &str) -> String {
+    if text.is_empty()
+        || text.contains('\n')
+        || text.starts_with(char::is_whitespace)
+        || text.ends_with(char::is_whitespace)
+    {
+        serde_json::to_string(text).unwrap_or_else(|_| text.to_string())
+    } else {
+        text.to_string()
     }
 }
 
@@ -4384,10 +4704,14 @@ fn render_subagent_detail_markdown(view: &SubagentDetailView) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use tempfile::tempdir;
 
-    use crate::service::{extract_last_timestamp, read_thread_raw};
+    use crate::service::{
+        collect_claude_thread_metadata, collect_codex_thread_metadata, collect_pi_thread_metadata,
+        extract_last_timestamp, read_thread_raw,
+    };
 
     #[test]
     fn empty_file_returns_error() {
@@ -4405,5 +4729,81 @@ mod tests {
             "{\"timestamp\":\"2026-02-23T00:00:01Z\"}\n{\"timestamp\":\"2026-02-23T00:00:02Z\"}\n";
         let timestamp = extract_last_timestamp(raw).expect("must extract timestamp");
         assert_eq!(timestamp, "2026-02-23T00:00:02Z");
+    }
+
+    #[test]
+    fn codex_thread_metadata_flattens_records_to_key_value_lines() {
+        let raw = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\",\"git\":{\"branch\":\"main\",\"commit_hash\":\"deadbeef\"}}}\n",
+            "{\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.3-codex\",\"approval_policy\":\"never\",\"sandbox_policy\":{\"type\":\"danger-full-access\"}}}\n",
+        );
+
+        let (metadata, warnings) = collect_codex_thread_metadata(Path::new("/tmp/mock"), raw);
+        assert!(warnings.is_empty());
+        assert!(metadata.iter().any(|item| item == "type = session_meta"));
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "payload.cwd = /tmp/project")
+        );
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "payload.git.branch = main")
+        );
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "payload.git.commit_hash = deadbeef")
+        );
+        assert!(metadata.iter().any(|item| item == "type = turn_context"));
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "payload.model = gpt-5.3-codex")
+        );
+    }
+
+    #[test]
+    fn claude_thread_metadata_flattens_raw_keys() {
+        let raw = "{\"type\":\"user\",\"cwd\":\"/tmp/project\",\"gitBranch\":\"feature/x\",\"version\":\"1.2.3\"}\n";
+
+        let (metadata, warnings) = collect_claude_thread_metadata(Path::new("/tmp/mock"), raw);
+        assert!(warnings.is_empty());
+        assert!(metadata.iter().any(|item| item == "type = user"));
+        assert!(metadata.iter().any(|item| item == "cwd = /tmp/project"));
+        assert!(metadata.iter().any(|item| item == "gitBranch = feature/x"));
+        assert!(metadata.iter().any(|item| item == "version = 1.2.3"));
+    }
+
+    #[test]
+    fn pi_thread_metadata_flattens_raw_records() {
+        let raw = concat!(
+            "{\"type\":\"session\",\"id\":\"12cb4c19-2774-4de4-a0d0-9fa32fbae29f\",\"cwd\":\"/tmp/project\"}\n",
+            "{\"type\":\"model_change\",\"modelId\":\"gpt-5.3-codex\"}\n",
+            "{\"type\":\"thinking_level_change\",\"thinkingLevel\":\"medium\"}\n",
+        );
+
+        let (metadata, warnings) = collect_pi_thread_metadata(Path::new("/tmp/mock"), raw);
+        assert!(warnings.is_empty());
+        assert!(metadata.iter().any(|item| item == "type = session"));
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "id = 12cb4c19-2774-4de4-a0d0-9fa32fbae29f")
+        );
+        assert!(metadata.iter().any(|item| item == "cwd = /tmp/project"));
+        assert!(metadata.iter().any(|item| item == "type = model_change"));
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "modelId = gpt-5.3-codex")
+        );
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "type = thinking_level_change")
+        );
+        assert!(metadata.iter().any(|item| item == "thinkingLevel = medium"));
     }
 }

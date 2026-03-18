@@ -1079,6 +1079,31 @@ fn codex_real_fixture_head_includes_subagents() {
 }
 
 #[test]
+fn codex_real_fixture_head_includes_thread_metadata() {
+    let fixture_root = codex_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", fixture_root)
+        .env("CLAUDE_CONFIG_DIR", "/tmp/missing-claude")
+        .arg(format!("codex://{REAL_FIXTURE_MAIN_ID}"))
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session_meta"))
+        .stdout(predicate::str::contains(
+            "payload.cwd = /redacted/5fc12f120e/eaf99e1a0891",
+        ))
+        .stdout(predicate::str::contains(
+            "payload.git.branch = txt_1ee2ff8bde628ccd",
+        ))
+        .stdout(predicate::str::contains(
+            "payload.model_provider = txt_e55535ca2bfc02d0",
+        ));
+}
+
+#[test]
 fn codex_real_fixture_subagent_detail_outputs_markdown() {
     let fixture_root = codex_real_fixture_root();
     assert!(fixture_root.exists(), "fixture root must exist");
@@ -1484,6 +1509,28 @@ fn pi_real_fixture_outputs_markdown() {
 }
 
 #[test]
+fn pi_real_fixture_head_includes_thread_metadata() {
+    let fixture_root = pi_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PI_CODING_AGENT_DIR", fixture_root)
+        .arg(pi_real_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session"))
+        .stdout(predicate::str::contains(
+            "cwd = /redacted/workspace/project",
+        ))
+        .stdout(predicate::str::contains("type = model_change"))
+        .stdout(predicate::str::contains("modelId = gpt-5.3-codex"))
+        .stdout(predicate::str::contains("type = thinking_level_change"))
+        .stdout(predicate::str::contains("thinkingLevel = medium"));
+}
+
+#[test]
 fn claude_subagent_outputs_markdown_view() {
     let temp = setup_claude_subagent_tree();
     let main_uri = agents_uri("claude", CLAUDE_SESSION_ID);
@@ -1522,6 +1569,26 @@ fn claude_real_fixture_head_includes_subagents() {
         .stdout(predicate::str::contains("subagents:"))
         .stdout(predicate::str::contains(subagent_uri))
         .stdout(predicate::str::contains("# Subagent Status").not());
+}
+
+#[test]
+fn claude_real_fixture_subagent_head_includes_thread_metadata() {
+    let fixture_root = claude_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CLAUDE_CONFIG_DIR", fixture_root)
+        .env("CODEX_HOME", "/tmp/missing-codex")
+        .arg(claude_real_subagent_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains(
+            "cwd = /redacted/57843fe62b/667def971841",
+        ))
+        .stdout(predicate::str::contains("gitBranch = txt_1ee2ff8bde628ccd"))
+        .stdout(predicate::str::contains("version = txt_3be394b47d685e0a"));
 }
 
 #[test]
