@@ -907,7 +907,6 @@ fn flatten_thread_metadata_value(
     {
         return;
     }
-
     match value {
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
             let Some(path) = path else {
@@ -973,7 +972,6 @@ fn should_ignore_thread_metadata_path(path: &str) -> bool {
             || path.starts_with(&format!("{prefix}["))
     })
 }
-
 fn format_thread_metadata_value(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
