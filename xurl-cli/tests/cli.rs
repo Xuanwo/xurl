@@ -47,6 +47,25 @@ fn setup_codex_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_codex_tree_with_metadata() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let thread_path = temp.path().join(format!(
+        "sessions/2026/02/23/rollout-2026-02-23T04-48-50-{SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &thread_path,
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/project\",\"git\":{\"branch\":\"main\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"world\"}]}}\n"
+        ),
+    )
+    .expect("write");
+
+    temp
+}
+
 fn setup_codex_tree_with_sqlite_missing_threads() -> tempfile::TempDir {
     let temp = setup_codex_tree();
     fs::write(temp.path().join("state.sqlite"), "").expect("write sqlite");
@@ -794,7 +813,9 @@ fn codex_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains(format!(
             "agents://codex/{SESSION_ID}"
         )))
-        .stdout(predicate::str::contains("- Match:"));
+        .stdout(predicate::str::contains("- Match:"))
+        .stdout(predicate::str::contains("thread_metadata:").not())
+        .stdout(predicate::str::contains("- Metadata: `disabled`"));
 }
 
 #[test]
@@ -812,6 +833,40 @@ fn shorthand_collection_query_outputs_markdown() {
             "agents://codex/{SESSION_ID}"
         )))
         .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn codex_collection_query_with_meta_outputs_thread_metadata() {
+    let temp = setup_codex_tree_with_metadata();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("agents://codex?limit=1&meta=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- Metadata: `enabled`"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session_meta"))
+        .stdout(predicate::str::contains("payload.cwd = /tmp/project"))
+        .stdout(predicate::str::contains("payload.git.branch = main"))
+        .stdout(predicate::str::contains("ignored query parameter: meta").not());
+}
+
+#[test]
+fn codex_collection_query_head_with_meta_outputs_frontmatter_only() {
+    let temp = setup_codex_tree_with_metadata();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("--head")
+        .arg("agents://codex?limit=1&meta=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("meta: true"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("payload.cwd = /tmp/project"))
+        .stdout(predicate::str::contains("# Threads").not())
+        .stdout(predicate::str::contains("ignored query parameter: meta").not());
 }
 
 #[test]

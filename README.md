@@ -54,10 +54,13 @@ Query provider threads:
 xurl agents://codex
 xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
+xurl 'agents://codex?limit=5&meta=1'
 # equivalent shorthand:
 xurl codex
 xurl 'codex?q=spawn_agent'
 ```
+
+Use `meta=1` to include provider thread metadata in each query result. Combine it with `--head` when you only want frontmatter output.
 
 Query role-scoped threads:
 
@@ -147,6 +150,7 @@ xurl [OPTIONS] <URI>
 
 - `q=<keyword>`: filters discovery results by keyword. Use when you want to find conversations by topic.
 - `limit=<n>`: limits discovery result count (default `10`). Use when you need a shorter or longer result list.
+- `meta=1`: includes provider thread metadata in each query result item. Use with discovery/query URIs when you want fields like `cwd` or nested git metadata in the frontmatter.
 - `<key>=<value>`: in write mode (`-d`), `xurl` forwards as `--<key> <value>` to the provider CLI.
 - `<flag>`: in write mode (`-d`), `xurl` forwards as `--<flag>` to the provider CLI.
 
@@ -154,6 +158,7 @@ Examples:
 
 ```text
 agents://codex?q=spawn_agent&limit=10
+agents://codex?limit=5&meta=1
 agents://codex/threads/<conversation_id>
 agents://codex/reviewer
 agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared

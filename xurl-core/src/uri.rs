@@ -368,9 +368,10 @@ pub fn parse_role_uri(input: &str) -> Result<Option<RoleUri>> {
 fn parse_thread_query_pairs(
     input: &str,
     query_raw: &str,
-) -> Result<(Option<String>, usize, Vec<String>)> {
+) -> Result<(Option<String>, usize, bool, Vec<String>)> {
     let mut q = None::<String>;
     let mut limit = None::<usize>;
+    let mut include_metadata = false;
     let mut ignored_params = Vec::<String>::new();
 
     for pair in query_raw.split('&').filter(|pair| !pair.is_empty()) {
@@ -390,6 +391,9 @@ fn parse_thread_query_pairs(
                     XurlError::InvalidUri(format!("{input} (invalid limit={value})"))
                 })?);
             }
+            "meta" => {
+                include_metadata = parse_thread_query_bool(input, "meta", &value)?;
+            }
             _ => {
                 if !ignored_params.iter().any(|existing| existing == &key) {
                     ignored_params.push(key);
@@ -398,7 +402,17 @@ fn parse_thread_query_pairs(
         }
     }
 
-    Ok((q, limit.unwrap_or(10), ignored_params))
+    Ok((q, limit.unwrap_or(10), include_metadata, ignored_params))
+}
+
+fn parse_thread_query_bool(input: &str, key: &str, value: &str) -> Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        other => Err(XurlError::InvalidUri(format!(
+            "{input} (invalid {key}={other})"
+        ))),
+    }
 }
 
 pub fn parse_collection_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
@@ -416,7 +430,7 @@ pub fn parse_collection_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
     }
 
     let provider = parse_provider(provider_part)?;
-    let (q, limit, ignored_params) = parse_thread_query_pairs(input, query_raw)?;
+    let (q, limit, include_metadata, ignored_params) = parse_thread_query_pairs(input, query_raw)?;
 
     Ok(Some(ThreadQuery {
         uri: input.to_string(),
@@ -424,6 +438,7 @@ pub fn parse_collection_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
         role: None,
         q,
         limit,
+        include_metadata,
         ignored_params,
     }))
 }
@@ -441,7 +456,7 @@ pub fn parse_role_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
         input
     };
     let (_, query_raw) = target.split_once('?').map_or((target, ""), |parts| parts);
-    let (q, limit, ignored_params) = parse_thread_query_pairs(input, query_raw)?;
+    let (q, limit, include_metadata, ignored_params) = parse_thread_query_pairs(input, query_raw)?;
 
     Ok(Some(ThreadQuery {
         uri: input.to_string(),
@@ -449,6 +464,7 @@ pub fn parse_role_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
         role: Some(role_uri.role),
         q,
         limit,
+        include_metadata,
         ignored_params,
     }))
 }
@@ -837,6 +853,7 @@ mod tests {
         assert_eq!(query.role, None);
         assert_eq!(query.q, None);
         assert_eq!(query.limit, 10);
+        assert!(!query.include_metadata);
         assert!(query.ignored_params.is_empty());
     }
 
@@ -849,6 +866,7 @@ mod tests {
         assert_eq!(query.role, None);
         assert_eq!(query.q, Some("spawn agent".to_string()));
         assert_eq!(query.limit, 7);
+        assert!(!query.include_metadata);
     }
 
     #[test]
@@ -860,6 +878,17 @@ mod tests {
         assert_eq!(query.role, None);
         assert_eq!(query.q, Some("spawn agent".to_string()));
         assert_eq!(query.limit, 7);
+        assert!(!query.include_metadata);
+    }
+
+    #[test]
+    fn parse_collection_query_uri_with_meta_flag() {
+        let query = parse_collection_query_uri("agents://codex?meta=1&limit=3")
+            .expect("collection query parse must work");
+        let query = query.expect("query should be present");
+        assert_eq!(query.provider, ProviderKind::Codex);
+        assert_eq!(query.limit, 3);
+        assert!(query.include_metadata);
     }
 
     #[test]
@@ -876,6 +905,13 @@ mod tests {
     fn parse_collection_query_uri_rejects_invalid_limit() {
         let err = parse_collection_query_uri("agents://gemini?limit=abc")
             .expect_err("invalid limit should fail");
+        assert!(format!("{err}").contains("invalid uri"));
+    }
+
+    #[test]
+    fn parse_collection_query_uri_rejects_invalid_meta_flag() {
+        let err = parse_collection_query_uri("agents://gemini?meta=maybe")
+            .expect_err("invalid meta should fail");
         assert!(format!("{err}").contains("invalid uri"));
     }
 
@@ -926,6 +962,17 @@ mod tests {
         assert_eq!(query.role, Some("reviewer".to_string()));
         assert_eq!(query.q, Some("spawn agent".to_string()));
         assert_eq!(query.limit, 3);
+        assert!(!query.include_metadata);
+    }
+
+    #[test]
+    fn parse_role_query_uri_with_meta_flag() {
+        let query = parse_role_query_uri("agents://codex/reviewer?meta=1")
+            .expect("role query parse must succeed");
+        let query = query.expect("query must exist");
+        assert_eq!(query.provider, ProviderKind::Codex);
+        assert_eq!(query.role, Some("reviewer".to_string()));
+        assert!(query.include_metadata);
     }
 
     #[test]

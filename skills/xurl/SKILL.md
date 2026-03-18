@@ -105,7 +105,10 @@ Keyword query with optional limit (default `10`):
 ```bash
 xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
+xurl 'agents://codex?limit=5&meta=1'
 ```
+
+Use `meta=1` to include provider thread metadata in each query result. Combine it with `--head` when you only want frontmatter output.
 
 Role-scoped query (session-first, role-fallback):
 
@@ -232,6 +235,7 @@ Query parameters:
 
 - `q=<keyword>`: filter discovery results by keyword. Use when searching conversations by topic.
 - `limit=<n>`: cap discovery results (default `10`). Use when you want fewer or more results.
+- `meta=1`: include provider thread metadata in each query result item. Use with discovery/query URIs when you want fields like `cwd` or nested git metadata in frontmatter.
 - `<key>=<value>`: in write mode (`-d`), forwarded as `--<key> <value>` to the provider CLI.
 - `<flag>`: in write mode (`-d`), forwarded as `--<flag>` to the provider CLI.
 
