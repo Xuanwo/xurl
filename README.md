@@ -73,7 +73,7 @@ Discover child targets:
 xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 ```
 
-Frontmatter includes provider metadata flattened into readable key-value lines such as `payload.git.branch = ...`, alongside discovery fields.
+Frontmatter includes the first provider metadata record flattened into readable key-value lines such as `payload.git.branch = ...`, and skips oversized instruction-like fields.
 
 Drill down into a discovered child target:
 
@@ -119,7 +119,7 @@ xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl [OPTIONS] <URI>
 ```
 
-- `-I, --head`: output frontmatter/discovery info only, including provider metadata flattened into key-value lines when available.
+- `-I, --head`: output frontmatter/discovery info only, including the first provider metadata record flattened into key-value lines when available.
 - `-d, --data <DATA>`: write payload (repeatable).
   - text: `-d "hello"`
   - file: `-d @prompt.txt`

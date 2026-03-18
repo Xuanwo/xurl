@@ -129,7 +129,7 @@ xurl codex/<conversation_id>
 xurl -I agents://codex/<conversation_id>
 ```
 
-Frontmatter includes provider metadata flattened into readable key-value lines such as `payload.git.branch = ...`, alongside discovery fields like `subagents` or `entries`.
+Frontmatter includes the first provider metadata record flattened into readable key-value lines such as `payload.git.branch = ...`, alongside discovery fields like `subagents` or `entries`, and skips oversized instruction-like fields.
 Use returned `subagents` or `entries` URI for next step.
 OpenCode child linkage is validated by sqlite `session.parent_id`.
 
@@ -177,7 +177,7 @@ cat prompt.md | xurl agents://claude -d @-
 ## Command Reference
 
 - Base form: `xurl [OPTIONS] <URI>`
-- `-I, --head`: frontmatter/discovery only, including provider metadata flattened into key-value lines when available
+- `-I, --head`: frontmatter/discovery only, including the first provider metadata record flattened into key-value lines when available
 - `-d, --data`: write payload, repeatable
   - text: `-d "hello"`
   - file: `-d @prompt.txt`

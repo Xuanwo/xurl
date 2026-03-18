@@ -731,7 +731,9 @@ fn collect_codex_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<St
 
         match value.get("type").and_then(Value::as_str) {
             Some("session_meta") | Some("turn_context") => {
-                push_thread_metadata_record(&mut metadata, &mut seen, &value);
+                if push_thread_metadata_record(&mut metadata, &mut seen, &value) {
+                    break;
+                }
             }
             _ => {}
         }
@@ -768,8 +770,9 @@ fn collect_claude_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<S
             if let Some(object) = metadata_value.as_object_mut() {
                 object.remove("message");
             }
-            push_thread_metadata_record(&mut metadata, &mut seen, &metadata_value);
-            break;
+            if push_thread_metadata_record(&mut metadata, &mut seen, &metadata_value) {
+                break;
+            }
         }
     }
 
@@ -801,7 +804,9 @@ fn collect_pi_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<Strin
 
         match value.get("type").and_then(Value::as_str) {
             Some("session") | Some("model_change") | Some("thinking_level_change") => {
-                push_thread_metadata_record(&mut metadata, &mut seen, &value);
+                if push_thread_metadata_record(&mut metadata, &mut seen, &value) {
+                    break;
+                }
             }
             _ => {}
         }
@@ -826,7 +831,7 @@ fn collect_opencode_thread_metadata(_path: &Path, raw: &str) -> (Vec<String>, Ve
         && let Ok(value) = serde_json::from_str::<Value>(first_non_empty)
         && value.get("type").and_then(Value::as_str) == Some("session")
     {
-        push_thread_metadata_record(&mut metadata, &mut seen, &value);
+        let _ = push_thread_metadata_record(&mut metadata, &mut seen, &value);
     }
 
     (metadata, Vec::new())
@@ -865,7 +870,7 @@ fn collect_json_object_thread_metadata(
             .as_object()
             .is_none_or(|object| !object.is_empty());
         if should_emit {
-            push_thread_metadata_record(&mut metadata, &mut seen, &metadata_value);
+            let _ = push_thread_metadata_record(&mut metadata, &mut seen, &metadata_value);
         }
     }
 
@@ -885,8 +890,10 @@ fn push_thread_metadata_record(
     metadata: &mut Vec<String>,
     seen: &mut BTreeSet<String>,
     value: &Value,
-) {
+) -> bool {
+    let before = metadata.len();
     flatten_thread_metadata_value(metadata, seen, None, value);
+    metadata.len() > before
 }
 
 fn flatten_thread_metadata_value(
@@ -895,6 +902,12 @@ fn flatten_thread_metadata_value(
     path: Option<&str>,
     value: &Value,
 ) {
+    if let Some(path) = path
+        && should_ignore_thread_metadata_path(path)
+    {
+        return;
+    }
+
     match value {
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
             let Some(path) = path else {
@@ -942,6 +955,23 @@ fn flatten_thread_metadata_value(
             }
         }
     }
+}
+
+fn should_ignore_thread_metadata_path(path: &str) -> bool {
+    const IGNORED_PREFIXES: &[&str] = &[
+        "base_instructions",
+        "user_instructions",
+        "developer_instructions",
+        "payload.base_instructions",
+        "payload.user_instructions",
+        "payload.developer_instructions",
+    ];
+
+    IGNORED_PREFIXES.iter().any(|prefix| {
+        path == *prefix
+            || path.starts_with(&format!("{prefix}."))
+            || path.starts_with(&format!("{prefix}["))
+    })
 }
 
 fn format_thread_metadata_value(value: &Value) -> String {
@@ -4734,7 +4764,7 @@ mod tests {
     #[test]
     fn codex_thread_metadata_flattens_records_to_key_value_lines() {
         let raw = concat!(
-            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\",\"git\":{\"branch\":\"main\",\"commit_hash\":\"deadbeef\"}}}\n",
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\",\"base_instructions\":{\"text\":\"very long\"},\"git\":{\"branch\":\"main\",\"commit_hash\":\"deadbeef\"}}}\n",
             "{\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.3-codex\",\"approval_policy\":\"never\",\"sandbox_policy\":{\"type\":\"danger-full-access\"}}}\n",
         );
 
@@ -4756,12 +4786,12 @@ mod tests {
                 .iter()
                 .any(|item| item == "payload.git.commit_hash = deadbeef")
         );
-        assert!(metadata.iter().any(|item| item == "type = turn_context"));
         assert!(
-            metadata
+            !metadata
                 .iter()
-                .any(|item| item == "payload.model = gpt-5.3-codex")
+                .any(|item| item.contains("base_instructions"))
         );
+        assert!(!metadata.iter().any(|item| item.contains("payload.model =")));
     }
 
     #[test]
@@ -4793,17 +4823,11 @@ mod tests {
                 .any(|item| item == "id = 12cb4c19-2774-4de4-a0d0-9fa32fbae29f")
         );
         assert!(metadata.iter().any(|item| item == "cwd = /tmp/project"));
-        assert!(metadata.iter().any(|item| item == "type = model_change"));
+        assert!(!metadata.iter().any(|item| item.contains("model_change")));
         assert!(
-            metadata
+            !metadata
                 .iter()
-                .any(|item| item == "modelId = gpt-5.3-codex")
+                .any(|item| item.contains("thinking_level_change"))
         );
-        assert!(
-            metadata
-                .iter()
-                .any(|item| item == "type = thinking_level_change")
-        );
-        assert!(metadata.iter().any(|item| item == "thinkingLevel = medium"));
     }
 }

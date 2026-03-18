@@ -1100,7 +1100,9 @@ fn codex_real_fixture_head_includes_thread_metadata() {
         ))
         .stdout(predicate::str::contains(
             "payload.model_provider = txt_e55535ca2bfc02d0",
-        ));
+        ))
+        .stdout(predicate::str::contains("base_instructions").not())
+        .stdout(predicate::str::contains("user_instructions").not());
 }
 
 #[test]
@@ -1524,10 +1526,10 @@ fn pi_real_fixture_head_includes_thread_metadata() {
         .stdout(predicate::str::contains(
             "cwd = /redacted/workspace/project",
         ))
-        .stdout(predicate::str::contains("type = model_change"))
-        .stdout(predicate::str::contains("modelId = gpt-5.3-codex"))
-        .stdout(predicate::str::contains("type = thinking_level_change"))
-        .stdout(predicate::str::contains("thinkingLevel = medium"));
+        .stdout(predicate::str::contains("type = model_change").not())
+        .stdout(predicate::str::contains("modelId = gpt-5.3-codex").not())
+        .stdout(predicate::str::contains("type = thinking_level_change").not())
+        .stdout(predicate::str::contains("thinkingLevel = medium").not());
 }
 
 #[test]
