@@ -36,6 +36,7 @@ const STATUS_COMPLETED: &str = "completed";
 const STATUS_ERRORED: &str = "errored";
 const STATUS_SHUTDOWN: &str = "shutdown";
 const STATUS_NOT_FOUND: &str = "notFound";
+const QUERY_METADATA_LINE_BUDGET: usize = 64;
 
 #[derive(Debug, Default, Clone)]
 struct AgentTimeline {
@@ -277,10 +278,7 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
             matched_preview,
             thread_metadata: match &candidate.search_target {
                 QuerySearchTarget::File(path) => {
-                    let (thread_metadata, metadata_warnings) =
-                        collect_thread_metadata(query.provider, path);
-                    warnings.extend(metadata_warnings);
-                    Some(thread_metadata)
+                    collect_query_thread_metadata(query.provider, path)
                 }
                 QuerySearchTarget::Text(_) => None,
             },
@@ -724,6 +722,85 @@ fn collect_thread_metadata(provider: ProviderKind, path: &Path) -> (Vec<String>,
         ProviderKind::Pi => collect_pi_thread_metadata(path, &raw),
         ProviderKind::Opencode => collect_opencode_thread_metadata(path, &raw),
     }
+}
+
+fn collect_query_thread_metadata(provider: ProviderKind, path: &Path) -> Option<Vec<String>> {
+    let metadata = match provider {
+        ProviderKind::Codex => {
+            collect_query_jsonl_thread_metadata(path, |value, metadata, seen| {
+                match value.get("type").and_then(Value::as_str) {
+                    Some("session_meta") | Some("turn_context") => {
+                        push_thread_metadata_record(metadata, seen, &value)
+                    }
+                    _ => false,
+                }
+            })
+        }
+        ProviderKind::Claude => {
+            collect_query_jsonl_thread_metadata(path, |value, metadata, seen| {
+                if looks_like_claude_metadata(&value) {
+                    let mut metadata_value = value;
+                    if let Some(object) = metadata_value.as_object_mut() {
+                        object.remove("message");
+                    }
+                    push_thread_metadata_record(metadata, seen, &metadata_value)
+                } else {
+                    false
+                }
+            })
+        }
+        ProviderKind::Pi => collect_query_jsonl_thread_metadata(path, |value, metadata, seen| {
+            match value.get("type").and_then(Value::as_str) {
+                Some("session") | Some("model_change") | Some("thinking_level_change") => {
+                    push_thread_metadata_record(metadata, seen, &value)
+                }
+                _ => false,
+            }
+        }),
+        ProviderKind::Amp | ProviderKind::Gemini | ProviderKind::Opencode => {
+            collect_thread_metadata(provider, path).0
+        }
+    };
+
+    if metadata.is_empty() {
+        None
+    } else {
+        Some(metadata)
+    }
+}
+
+fn collect_query_jsonl_thread_metadata<F>(path: &Path, mut on_value: F) -> Vec<String>
+where
+    F: FnMut(Value, &mut Vec<String>, &mut BTreeSet<String>) -> bool,
+{
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
+
+    let reader = BufReader::new(file);
+    let mut metadata = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for line in reader.lines().take(QUERY_METADATA_LINE_BUDGET) {
+        let Ok(line) = line else {
+            break;
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+
+        if on_value(value, &mut metadata, &mut seen) {
+            break;
+        }
+    }
+
+    metadata
 }
 
 fn collect_codex_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
@@ -4756,13 +4833,13 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use crate::{
-        ProviderKind, ThreadQuery, ThreadQueryItem, ThreadQueryResult,
-        render_thread_query_head_markdown,
-    };
     use crate::service::{
         collect_claude_thread_metadata, collect_codex_thread_metadata, collect_pi_thread_metadata,
         extract_last_timestamp, read_thread_raw,
+    };
+    use crate::{
+        ProviderKind, ThreadQuery, ThreadQueryItem, ThreadQueryResult,
+        render_thread_query_head_markdown,
     };
 
     #[test]

@@ -890,7 +890,12 @@ fn claude_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains("# Threads"))
         .stdout(predicate::str::contains("- Limit: `1`"))
         .stdout(predicate::str::contains("agents://claude/"))
-        .stdout(predicate::str::contains("- Match:"));
+        .stdout(predicate::str::contains("- Match:"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains(format!(
+            "agentId = {CLAUDE_AGENT_ID}"
+        )))
+        .stdout(predicate::str::contains("isSidechain = true"));
 }
 
 #[test]
@@ -924,7 +929,10 @@ fn pi_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains(format!(
             "agents://pi/{PI_SESSION_ID}"
         )))
-        .stdout(predicate::str::contains("- Match:"));
+        .stdout(predicate::str::contains("- Match:"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session"))
+        .stdout(predicate::str::contains("cwd = /tmp/project"));
 }
 
 #[test]

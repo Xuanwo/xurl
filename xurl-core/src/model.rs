@@ -197,6 +197,7 @@ pub struct ThreadQueryItem {
     pub thread_source: String,
     pub updated_at: Option<String>,
     pub matched_preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_metadata: Option<Vec<String>>,
 }
 
