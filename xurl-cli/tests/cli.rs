@@ -47,6 +47,25 @@ fn setup_codex_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_codex_tree_with_metadata() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let thread_path = temp.path().join(format!(
+        "sessions/2026/02/23/rollout-2026-02-23T04-48-50-{SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &thread_path,
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/project\",\"git\":{\"branch\":\"main\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"world\"}]}}\n"
+        ),
+    )
+    .expect("write");
+
+    temp
+}
+
 fn setup_codex_tree_with_sqlite_missing_threads() -> tempfile::TempDir {
     let temp = setup_codex_tree();
     fs::write(temp.path().join("state.sqlite"), "").expect("write sqlite");
@@ -61,7 +80,11 @@ fn setup_codex_role_query_tree() -> tempfile::TempDir {
     fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
     fs::write(
         &thread_path,
-        "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"run reviewer role\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"reviewer done\"}]}}\n",
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/reviewer\",\"git\":{\"branch\":\"review-main\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"run reviewer role\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"reviewer done\"}]}}\n"
+        ),
     )
     .expect("write");
     temp
@@ -782,7 +805,7 @@ fn amp_collection_query_outputs_markdown() {
 
 #[test]
 fn codex_collection_query_outputs_markdown() {
-    let temp = setup_codex_tree();
+    let temp = setup_codex_tree_with_metadata();
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CODEX_HOME", temp.path())
@@ -794,7 +817,11 @@ fn codex_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains(format!(
             "agents://codex/{SESSION_ID}"
         )))
-        .stdout(predicate::str::contains("- Match:"));
+        .stdout(predicate::str::contains("- Match:"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session_meta"))
+        .stdout(predicate::str::contains("payload.cwd = /tmp/project"))
+        .stdout(predicate::str::contains("payload.git.branch = main"));
 }
 
 #[test]
@@ -828,7 +855,10 @@ fn role_query_outputs_markdown() {
         .stdout(predicate::str::contains(format!(
             "agents://codex/{SESSION_ID}"
         )))
-        .stdout(predicate::str::contains("- Match:"));
+        .stdout(predicate::str::contains("- Match:"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("payload.cwd = /tmp/reviewer"))
+        .stdout(predicate::str::contains("payload.git.branch = review-main"));
 }
 
 #[test]
@@ -939,6 +969,22 @@ fn head_flag_outputs_frontmatter_only() {
         .stdout(predicate::str::contains("mode: 'subagent_index'"))
         .stdout(predicate::str::contains("subagents:"))
         .stdout(predicate::str::contains("# Thread").not());
+}
+
+#[test]
+fn codex_collection_query_head_outputs_frontmatter_with_thread_metadata() {
+    let temp = setup_codex_tree_with_metadata();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("--head")
+        .arg("agents://codex?limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("payload.cwd = /tmp/project"))
+        .stdout(predicate::str::contains("payload.git.branch = main"))
+        .stdout(predicate::str::contains("# Threads").not());
 }
 
 #[test]

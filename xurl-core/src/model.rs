@@ -197,6 +197,7 @@ pub struct ThreadQueryItem {
     pub thread_source: String,
     pub updated_at: Option<String>,
     pub matched_preview: Option<String>,
+    pub thread_metadata: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

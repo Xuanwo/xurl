@@ -67,6 +67,8 @@ xurl agents://codex/reviewer
 xurl codex/reviewer
 ```
 
+Query results include the same reduced thread metadata used by `--head` when it is available, so you can inspect fields like `payload.git.branch` without opening each thread individually.
+
 Discover child targets:
 
 ```bash

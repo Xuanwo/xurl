@@ -275,6 +275,15 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
             thread_source: candidate.thread_source.clone(),
             updated_at: candidate.updated_at.clone(),
             matched_preview,
+            thread_metadata: match &candidate.search_target {
+                QuerySearchTarget::File(path) => {
+                    let (thread_metadata, metadata_warnings) =
+                        collect_thread_metadata(query.provider, path);
+                    warnings.extend(metadata_warnings);
+                    Some(thread_metadata)
+                }
+                QuerySearchTarget::Text(_) => None,
+            },
         });
     }
 
@@ -313,6 +322,9 @@ pub fn render_thread_query_head_markdown(result: &ThreadQueryResult) -> String {
             }
             if let Some(matched_preview) = &item.matched_preview {
                 push_yaml_string_with_indent(&mut output, 2, "matched_preview", matched_preview);
+            }
+            if let Some(thread_metadata) = &item.thread_metadata {
+                render_thread_metadata_with_indent(&mut output, 2, thread_metadata);
             }
         }
     }
@@ -675,10 +687,18 @@ fn render_thread_metadata(output: &mut String, metadata: &[String]) {
     if metadata.is_empty() {
         return;
     }
+    render_thread_metadata_with_indent(output, 0, metadata);
+}
 
-    output.push_str("thread_metadata:\n");
+fn render_thread_metadata_with_indent(output: &mut String, indent: usize, metadata: &[String]) {
+    if metadata.is_empty() {
+        return;
+    }
+
+    let prefix = " ".repeat(indent);
+    output.push_str(&format!("{prefix}thread_metadata:\n"));
     for value in metadata {
-        output.push_str(&format!("  - '{}'\n", yaml_single_quoted(value)));
+        output.push_str(&format!("{prefix}  - '{}'\n", yaml_single_quoted(value)));
     }
 }
 
@@ -4736,6 +4756,10 @@ mod tests {
 
     use tempfile::tempdir;
 
+    use crate::{
+        ProviderKind, ThreadQuery, ThreadQueryItem, ThreadQueryResult,
+        render_thread_query_head_markdown,
+    };
     use crate::service::{
         collect_claude_thread_metadata, collect_codex_thread_metadata, collect_pi_thread_metadata,
         extract_last_timestamp, read_thread_raw,
@@ -4827,5 +4851,35 @@ mod tests {
                 .iter()
                 .any(|item| item.contains("thinking_level_change"))
         );
+    }
+
+    #[test]
+    fn render_thread_query_head_renders_metadata_entries() {
+        let result = ThreadQueryResult {
+            query: ThreadQuery {
+                uri: "agents://codex?limit=1".to_string(),
+                provider: ProviderKind::Codex,
+                role: None,
+                q: None,
+                limit: 1,
+                ignored_params: Vec::new(),
+            },
+            items: vec![ThreadQueryItem {
+                thread_id: "019c871c-b1f9-7f60-9c4f-87ed09f13592".to_string(),
+                uri: "agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592".to_string(),
+                thread_source: "/tmp/mock.jsonl".to_string(),
+                updated_at: Some("123".to_string()),
+                matched_preview: None,
+                thread_metadata: Some(vec![
+                    "type = session_meta".to_string(),
+                    "payload.cwd = /tmp/project".to_string(),
+                ]),
+            }],
+            warnings: Vec::new(),
+        };
+
+        let output = render_thread_query_head_markdown(&result);
+        assert!(output.contains("thread_metadata:"));
+        assert!(output.contains("payload.cwd = /tmp/project"));
     }
 }

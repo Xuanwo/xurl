@@ -115,6 +115,8 @@ xurl agents://codex/reviewer
 xurl codex/reviewer
 ```
 
+Query results include reduced thread metadata when available, so you can inspect fields like `payload.git.branch` or `cwd` directly from the result list.
+
 ### 2) Read
 
 ```bash
