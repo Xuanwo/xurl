@@ -4,6 +4,15 @@
 
 Proposed
 
+## Relation to Unified URI Model
+
+This document defines the provider-scoped child drill-down part of the unified `agents://` URI system.
+
+See also:
+
+- [Agents URI Design](./agents-uri-design.md)
+- [Path-Scoped Query URI Design](./path-query-uri-design.md)
+
 ## Context
 
 `xurl` currently resolves a single thread URI into one local thread file and renders a timeline view. This works for primary conversations, but it does not provide a first-class way to inspect subagent lifecycle state or drill down into a specific subagent context under a parent thread.
@@ -28,27 +37,32 @@ The existing URI behavior is inconsistent with subagent use cases because it onl
 
 ### Existing URIs (unchanged)
 
-- `codex://<thread_id>`
-- `codex://threads/<thread_id>`
-- `claude://<session_id>`
-- Other providers continue their current single-thread form.
+- `agents://<provider>`
+- `agents://<provider>/<thread_id>`
+- `agents://<provider>/<role>`
+
+Within the unified `agents://` model:
+
+- `agents://<provider>` stays provider-scoped query
+- `agents://<provider>/<thread_id>` stays main thread read
+- `agents://<provider>/<role>` stays role-scoped query or role-based create
 
 ### New Drill-Down URI (provider-consistent)
 
 - Drill down into one subagent:
-  - `<provider>://<main_thread_id>/<agent_id>`
+  - `agents://<provider>/<main_thread_id>/<agent_id>`
 
 ## CLI Mode Model
 
 ### Aggregate Metadata
 
 - Aggregate subagents/entries under a parent thread is triggered by `--head`:
-  - `xurl -I '<provider>://<main_thread_id>'`
+  - `xurl -I 'agents://<provider>/<main_thread_id>'`
 
 ### Single-Agent Drill-Down
 
-- Drill-down view is path-based:
-  - `xurl '<provider>://<main_thread_id>/<agent_id>'`
+- Drill-down view uses the URI path segments under the provider-scoped form:
+  - `xurl 'agents://<provider>/<main_thread_id>/<agent_id>'`
 
 ### Mode Constraints
 
@@ -73,7 +87,7 @@ The existing URI behavior is inconsistent with subagent use cases because it onl
 
 ## Resolution Flow
 
-### Aggregate: `-I <provider>://<main>`
+### Aggregate: `-I agents://<provider>/<main>`
 
 1. Resolve and load parent thread.
 2. Discover child/subagent records for that provider.
@@ -81,7 +95,7 @@ The existing URI behavior is inconsistent with subagent use cases because it onl
 4. Build per-agent status summary.
 5. Render frontmatter only, including discovery lists (`subagents` / `entries`) when available.
 
-### Drill-Down: `<provider>://<main>/<agent>`
+### Drill-Down: `agents://<provider>/<main>/<agent>`
 
 1. Resolve and load parent thread.
 2. Locate target agent/thread using provider mapping rules.
@@ -146,11 +160,11 @@ Single-thread timeline output includes YAML frontmatter fields for machine use:
 
 - URI parsing unit tests:
   - existing URIs
-  - `<provider>://<main>/<agent>`
+  - `agents://<provider>/<main>/<agent>`
   - malformed path rejection
 - CLI argument tests:
-  - `-I <provider>://<main>`
-  - `-I <provider>://<main>/<agent>`
+  - `-I agents://<provider>/<main>`
+  - `-I agents://<provider>/<main>/<agent>`
   - invalid `--list` (unsupported flag)
 - Provider tests:
   - Codex parent-child validation and lifecycle extraction
