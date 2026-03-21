@@ -5,12 +5,17 @@
 - `xurl-cli`: thin CLI that parses `xurl <uri>` arguments with `clap`, wires up `ProviderRoots::from_env_or_home`, emits metadata warnings to `stderr`, and prints rendered markdown (`render_thread_markdown`).
 
 ## CLI Parameter & Provider Behavior Matrix
-- The CLI accepts a single `<uri>` (`codex://<id>`, `codex://threads/<id>`, `claude://<id>`, or `opencode://<id>`) and an optional `-I/--head` flag for frontmatter-only output.
+- The CLI accepts a single `<uri>` and an optional `-I/--head` flag for frontmatter-only output.
 - `ProviderRoots::from_env_or_home` sources the base directories using:
   - Codex: `CODEX_HOME` then `~/.codex`
   - Claude: `CLAUDE_CONFIG_DIR` then `~/.claude`
   - OpenCode: `XDG_DATA_HOME/opencode` then `~/.local/share/opencode`
 - `render_thread_markdown` converts provider payloads into a markdown thread view with frontmatter metadata plus user/assistant-focused content; warnings from `resolved.metadata.warnings` are emitted to `stderr` before the primary output.
+
+## Design Docs
+- Design documents live under `docs/`.
+- Before proposing, implementing, or revising URI behavior, query behavior, or other user-facing semantics, read the relevant design docs in `docs/` first and align with them.
+- If implementation diverges from an existing design doc, update the design doc in the same change or explain clearly why the divergence is intentional.
 
 ## Error Handling & Exit Contract
 - `main` maps any `xurl_core::Result` failure to a non-zero exit code (1) and prints `error: <message>` on `stderr`; successes return exit code 0.
