@@ -66,6 +66,28 @@ fn setup_codex_tree_with_metadata() -> tempfile::TempDir {
     temp
 }
 
+fn setup_codex_tree_with_scope(scope: &Path) -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let thread_path = temp.path().join(format!(
+        "sessions/2026/02/23/rollout-2026-02-23T04-48-50-{SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &thread_path,
+        format!(
+            concat!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":\"{}\",\"git\":{{\"branch\":\"main\"}}}}}}\n",
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"hello\"}}]}}}}\n",
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"world\"}}]}}}}\n"
+            ),
+            scope.display()
+        ),
+    )
+    .expect("write");
+
+    temp
+}
+
 fn setup_codex_tree_with_sqlite_missing_threads() -> tempfile::TempDir {
     let temp = setup_codex_tree();
     fs::write(temp.path().join("state.sqlite"), "").expect("write sqlite");
@@ -122,7 +144,7 @@ fn setup_amp_tree() -> tempfile::TempDir {
     fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
     fs::write(
         &thread_path,
-        r#"{"id":"T-019c0797-c402-7389-bd80-d785c98df295","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]},{"role":"assistant","content":[{"type":"thinking","thinking":"analyze"},{"type":"text","text":"world"}]}]}"#,
+        r#"{"id":"T-019c0797-c402-7389-bd80-d785c98df295","cwd":"/tmp/project","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]},{"role":"assistant","content":[{"type":"thinking","thinking":"analyze"},{"type":"text","text":"world"}]}]}"#,
     )
     .expect("write");
     temp
@@ -212,7 +234,7 @@ fn setup_claude_subagent_tree() -> tempfile::TempDir {
     fs::write(
         &main_thread,
         format!(
-            "{{\"timestamp\":\"2026-02-23T00:00:00Z\",\"type\":\"user\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"message\":{{\"role\":\"user\",\"content\":\"root thread\"}}}}\n"
+            "{{\"timestamp\":\"2026-02-23T00:00:00Z\",\"type\":\"system\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"cwd\":\"/tmp/project\",\"message\":{{\"role\":\"system\",\"content\":\"meta\"}}}}\n{{\"timestamp\":\"2026-02-23T00:00:01Z\",\"type\":\"user\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"message\":{{\"role\":\"user\",\"content\":\"root thread\"}}}}\n"
         ),
     )
     .expect("write main");
@@ -223,7 +245,7 @@ fn setup_claude_subagent_tree() -> tempfile::TempDir {
     fs::write(
         &agent_thread,
         format!(
-            "{{\"timestamp\":\"2026-02-23T00:00:10Z\",\"type\":\"user\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"isSidechain\":true,\"agentId\":\"{CLAUDE_AGENT_ID}\",\"message\":{{\"role\":\"user\",\"content\":\"agent task\"}}}}\n{{\"timestamp\":\"2026-02-23T00:00:11Z\",\"type\":\"assistant\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"isSidechain\":true,\"agentId\":\"{CLAUDE_AGENT_ID}\",\"message\":{{\"role\":\"assistant\",\"content\":\"agent done\"}}}}\n"
+            "{{\"timestamp\":\"2026-02-23T00:00:10Z\",\"type\":\"user\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"isSidechain\":true,\"agentId\":\"{CLAUDE_AGENT_ID}\",\"cwd\":\"/tmp/project\",\"message\":{{\"role\":\"user\",\"content\":\"agent task\"}}}}\n{{\"timestamp\":\"2026-02-23T00:00:11Z\",\"type\":\"assistant\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"isSidechain\":true,\"agentId\":\"{CLAUDE_AGENT_ID}\",\"cwd\":\"/tmp/project\",\"message\":{{\"role\":\"assistant\",\"content\":\"agent done\"}}}}\n"
         ),
     )
     .expect("write agent");
@@ -243,6 +265,7 @@ fn setup_gemini_tree() -> tempfile::TempDir {
             r#"{{
   "sessionId": "{GEMINI_SESSION_ID}",
   "projectHash": "0c0d7b04c22749f3687ea60b66949fd32bcea2551d4349bf72346a9ccc9a9ba4",
+  "projectRoot": "/tmp/project",
   "startTime": "2026-01-08T11:55:12.379Z",
   "lastUpdated": "2026-01-08T12:31:14.881Z",
   "messages": [
@@ -409,7 +432,8 @@ fn setup_opencode_subagent_tree() -> tempfile::TempDir {
         "
         CREATE TABLE session (
             id TEXT PRIMARY KEY,
-            parent_id TEXT
+            parent_id TEXT,
+            directory TEXT
         );
         CREATE TABLE message (
             id TEXT PRIMARY KEY,
@@ -429,18 +453,26 @@ fn setup_opencode_subagent_tree() -> tempfile::TempDir {
     .expect("create schema");
 
     conn.execute(
-        "INSERT INTO session (id, parent_id) VALUES (?1, NULL)",
-        [OPENCODE_MAIN_SESSION_ID],
+        "INSERT INTO session (id, parent_id, directory) VALUES (?1, NULL, ?2)",
+        params![OPENCODE_MAIN_SESSION_ID, "/tmp/project"],
     )
     .expect("insert main session");
     conn.execute(
-        "INSERT INTO session (id, parent_id) VALUES (?1, ?2)",
-        params![OPENCODE_CHILD_SESSION_ID, OPENCODE_MAIN_SESSION_ID],
+        "INSERT INTO session (id, parent_id, directory) VALUES (?1, ?2, ?3)",
+        params![
+            OPENCODE_CHILD_SESSION_ID,
+            OPENCODE_MAIN_SESSION_ID,
+            "/tmp/project"
+        ],
     )
     .expect("insert child session");
     conn.execute(
-        "INSERT INTO session (id, parent_id) VALUES (?1, ?2)",
-        params![OPENCODE_CHILD_EMPTY_SESSION_ID, OPENCODE_MAIN_SESSION_ID],
+        "INSERT INTO session (id, parent_id, directory) VALUES (?1, ?2, ?3)",
+        params![
+            OPENCODE_CHILD_EMPTY_SESSION_ID,
+            OPENCODE_MAIN_SESSION_ID,
+            "/tmp/project"
+        ],
     )
     .expect("insert empty child session");
 
@@ -948,6 +980,158 @@ fn opencode_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains("- Limit: `1`"))
         .stdout(predicate::str::contains("agents://opencode/"))
         .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn amp_path_query_outputs_markdown() {
+    let temp = setup_amp_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .arg("agents:///tmp/project?providers=amp&q=world&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
+        .stdout(predicate::str::contains("- Providers: `amp`"))
+        .stdout(predicate::str::contains("agents://amp/"))
+        .stdout(predicate::str::contains("- Provider: `amp`"));
+}
+
+#[test]
+fn codex_path_query_outputs_markdown() {
+    let temp = setup_codex_tree_with_metadata();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("agents:///tmp/project?providers=codex&q=hello&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
+        .stdout(predicate::str::contains("- Providers: `codex`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://codex/{SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Provider: `codex`"));
+}
+
+#[test]
+fn claude_path_query_outputs_markdown() {
+    let temp = setup_claude_subagent_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CLAUDE_CONFIG_DIR", temp.path())
+        .arg("agents:///tmp/project?providers=claude&q=agent&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
+        .stdout(predicate::str::contains("- Providers: `claude`"))
+        .stdout(predicate::str::contains("agents://claude/"))
+        .stdout(predicate::str::contains("- Provider: `claude`"));
+}
+
+#[test]
+fn gemini_path_query_outputs_markdown() {
+    let temp = setup_gemini_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("GEMINI_CLI_HOME", temp.path())
+        .arg("agents:///tmp/project?providers=gemini&q=hello&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
+        .stdout(predicate::str::contains("- Providers: `gemini`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://gemini/{GEMINI_SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Provider: `gemini`"));
+}
+
+#[test]
+fn pi_path_query_outputs_markdown() {
+    let temp = setup_pi_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PI_CODING_AGENT_DIR", temp.path().join("agent"))
+        .arg("agents:///tmp/project?providers=pi&q=root&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
+        .stdout(predicate::str::contains("- Providers: `pi`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://pi/{PI_SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Provider: `pi`"));
+}
+
+#[test]
+fn opencode_path_query_outputs_markdown() {
+    let temp = setup_opencode_subagent_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .arg("agents:///tmp/project?providers=opencode&q=help&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
+        .stdout(predicate::str::contains("- Providers: `opencode`"))
+        .stdout(predicate::str::contains("agents://opencode/"))
+        .stdout(predicate::str::contains("- Provider: `opencode`"));
+}
+
+#[test]
+fn path_query_current_dir_shorthand_outputs_canonical_uri() {
+    let temp = tempdir().expect("tempdir");
+    let workspace = temp.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("mkdir");
+    let actual_workspace = workspace.canonicalize().expect("canonicalize workspace");
+    let codex_home = setup_codex_tree_with_scope(&actual_workspace);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.current_dir(&workspace)
+        .env("CODEX_HOME", codex_home.path())
+        .arg("agents://.?q=hello&providers=codex")
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "uri: 'agents://{}?q=hello&providers=codex'",
+            actual_workspace.display()
+        )))
+        .stdout(predicate::str::contains("mode: 'path_thread_query'"));
+}
+
+#[test]
+fn path_query_home_shorthand_outputs_canonical_uri() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("home");
+    let repo = home.join("repo");
+    fs::create_dir_all(&repo).expect("mkdir");
+    let codex_home = setup_codex_tree_with_scope(&repo);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("HOME", &home)
+        .env("CODEX_HOME", codex_home.path())
+        .arg("agents://~/repo?q=hello&providers=codex")
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "uri: 'agents://{}?q=hello&providers=codex'",
+            repo.display()
+        )))
+        .stdout(predicate::str::contains("mode: 'path_thread_query'"));
+}
+
+#[test]
+fn unsupported_global_query_form_returns_error() {
+    let temp = setup_codex_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("agents://?q=hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid uri"));
 }
 
 #[test]

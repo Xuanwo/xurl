@@ -8,6 +8,7 @@
 
 - Read an agent conversation as markdown.
 - Query recent threads and keyword matches for a provider.
+- Query conversations by local path across providers.
 - Query role-scoped threads with `agents://<provider>/<role>`.
 - Discover subagent/branch navigation targets.
 - Start a new conversation with agents.
@@ -57,6 +58,15 @@ xurl 'agents://claude?q=agent&limit=5'
 # equivalent shorthand:
 xurl codex
 xurl 'codex?q=spawn_agent'
+```
+
+Query conversations by path:
+
+```bash
+xurl agents:///Users/alice/work/xurl
+xurl 'agents:///Users/alice/work/xurl?q=refactor&limit=5'
+xurl 'agents://.?q=refactor&providers=codex,claude'
+xurl 'agents://~/work/xurl?providers=opencode'
 ```
 
 Query role-scoped threads:
@@ -145,10 +155,29 @@ xurl [OPTIONS] <URI>
 - `child_id`: child/subagent identifier under a main conversation.
 - `query`: optional key-value parameters, interpreted by context.
 
+### Path-Scoped Query URI
+
+```text
+agents:///abs/path[?<query>]
+agents://.[?<query>]
+agents://./subdir[?<query>]
+agents://..[?<query>]
+agents://../repo[?<query>]
+agents://~[?<query>]
+agents://~/repo[?<query>]
+```
+
+- `agents:///abs/path`: canonical local path query form.
+- `agents://.` / `agents://./subdir`: query relative to the current working directory.
+- `agents://..` / `agents://../repo`: query relative to the parent of the current working directory.
+- `agents://~` / `agents://~/repo`: query relative to the home directory.
+- path-scoped query always returns a conversation list.
+
 ### Agents Query
 
 - `q=<keyword>`: filters discovery results by keyword. Use when you want to find conversations by topic.
 - `limit=<n>`: limits discovery result count (default `10`). Use when you need a shorter or longer result list.
+- `providers=<name[,name...]>`: restricts a path-scoped query to selected providers.
 - `<key>=<value>`: in write mode (`-d`), `xurl` forwards as `--<key> <value>` to the provider CLI.
 - `<flag>`: in write mode (`-d`), `xurl` forwards as `--<flag>` to the provider CLI.
 
@@ -156,6 +185,8 @@ Examples:
 
 ```text
 agents://codex?q=spawn_agent&limit=10
+agents:///Users/alice/work/xurl?q=refactor&providers=codex,claude
+agents://.?q=refactor&providers=codex
 agents://codex/threads/<conversation_id>
 agents://codex/reviewer
 agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared

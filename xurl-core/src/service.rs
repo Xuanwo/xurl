@@ -15,10 +15,11 @@ use walkdir::WalkDir;
 use crate::error::{Result, XurlError};
 use crate::jsonl;
 use crate::model::{
-    MessageRole, PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedThread,
-    SubagentDetailView, SubagentExcerptMessage, SubagentLifecycleEvent, SubagentListItem,
-    SubagentListView, SubagentQuery, SubagentRelation, SubagentThreadRef, SubagentView,
-    ThreadQuery, ThreadQueryItem, ThreadQueryResult, WriteRequest, WriteResult,
+    MessageRole, PathThreadQuery, PathThreadQueryResult, PiEntryListItem, PiEntryListView,
+    PiEntryQuery, ProviderKind, ResolvedThread, SubagentDetailView, SubagentExcerptMessage,
+    SubagentLifecycleEvent, SubagentListItem, SubagentListView, SubagentQuery, SubagentRelation,
+    SubagentThreadRef, SubagentView, ThreadQuery, ThreadQueryItem, ThreadQueryResult, WriteRequest,
+    WriteResult,
 };
 use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
@@ -198,11 +199,13 @@ enum QuerySearchTarget {
 
 #[derive(Debug, Clone)]
 struct QueryCandidate {
+    provider: ProviderKind,
     thread_id: String,
     uri: String,
     thread_source: String,
     updated_at: Option<String>,
     updated_epoch: Option<u64>,
+    scope_path: Option<PathBuf>,
     search_target: QuerySearchTarget,
 }
 
@@ -271,6 +274,7 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
         };
 
         items.push(ThreadQueryItem {
+            provider: candidate.provider,
             thread_id: candidate.thread_id.clone(),
             uri: candidate.uri.clone(),
             thread_source: candidate.thread_source.clone(),
@@ -286,6 +290,84 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
     }
 
     Ok(ThreadQueryResult {
+        query: query.clone(),
+        items,
+        warnings,
+    })
+}
+
+pub fn query_threads_by_path(
+    query: &PathThreadQuery,
+    roots: &ProviderRoots,
+) -> Result<PathThreadQueryResult> {
+    let mut warnings = query
+        .ignored_params
+        .iter()
+        .map(|key| format!("ignored query parameter: {key}"))
+        .collect::<Vec<_>>();
+
+    let providers = query.providers.clone().unwrap_or_else(all_provider_kinds);
+    let keyword_filter = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    let requested_path = PathBuf::from(&query.scope_path);
+    let mut candidates = Vec::new();
+    for provider in providers.iter().copied() {
+        candidates.extend(collect_candidates_for_provider(
+            provider,
+            roots,
+            &mut warnings,
+            keyword_filter.is_some(),
+        )?);
+    }
+
+    candidates.retain(|candidate| {
+        candidate
+            .scope_path
+            .as_deref()
+            .is_some_and(|scope_path| path_matches_scope(scope_path, &requested_path))
+    });
+    candidates.sort_by_key(|candidate| Reverse(candidate.updated_epoch.unwrap_or(0)));
+
+    if query.limit == 0 {
+        return Ok(PathThreadQueryResult {
+            query: query.clone(),
+            items: Vec::new(),
+            warnings,
+        });
+    }
+
+    let mut items = Vec::new();
+    for candidate in &candidates {
+        if items.len() >= query.limit {
+            break;
+        }
+
+        let matched_preview = if let Some(keyword_filter) = keyword_filter {
+            let matched_preview = match_candidate_preview(candidate, keyword_filter)?;
+            if matched_preview.is_none() {
+                continue;
+            }
+            matched_preview
+        } else {
+            None
+        };
+
+        items.push(ThreadQueryItem {
+            provider: candidate.provider,
+            thread_id: candidate.thread_id.clone(),
+            uri: candidate.uri.clone(),
+            thread_source: candidate.thread_source.clone(),
+            updated_at: candidate.updated_at.clone(),
+            matched_preview,
+            thread_metadata: match &candidate.search_target {
+                QuerySearchTarget::File(path) => {
+                    collect_query_thread_metadata(candidate.provider, path)
+                }
+                QuerySearchTarget::Text(_) => None,
+            },
+        });
+    }
+
+    Ok(PathThreadQueryResult {
         query: query.clone(),
         items,
         warnings,
@@ -312,6 +394,7 @@ pub fn render_thread_query_head_markdown(result: &ThreadQueryResult) -> String {
         output.push_str("  []\n");
     } else {
         for item in &result.items {
+            push_yaml_string_with_indent(&mut output, 2, "provider", &item.provider.to_string());
             push_yaml_string_with_indent(&mut output, 2, "thread_id", &item.thread_id);
             push_yaml_string_with_indent(&mut output, 2, "uri", &item.uri);
             push_yaml_string_with_indent(&mut output, 2, "thread_source", &item.thread_source);
@@ -357,6 +440,84 @@ pub fn render_thread_query_markdown(result: &ThreadQueryResult) -> String {
 
     for (index, item) in result.items.iter().enumerate() {
         output.push_str(&format!("## {}. `{}`\n\n", index + 1, item.uri));
+        output.push_str(&format!("- Provider: `{}`\n", item.provider));
+        output.push_str(&format!("- Thread ID: `{}`\n", item.thread_id));
+        output.push_str(&format!("- Thread Source: `{}`\n", item.thread_source));
+        if let Some(updated_at) = &item.updated_at {
+            output.push_str(&format!("- Updated At: `{}`\n", updated_at));
+        }
+        if let Some(matched_preview) = &item.matched_preview {
+            output.push_str(&format!("- Match: `{}`\n", matched_preview));
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+pub fn render_path_thread_query_head_markdown(result: &PathThreadQueryResult) -> String {
+    let mut output = String::new();
+    output.push_str("---\n");
+    push_yaml_string(&mut output, "uri", &result.query.uri);
+    push_yaml_string(&mut output, "scope_path", &result.query.scope_path);
+    push_yaml_string(&mut output, "mode", "path_thread_query");
+    push_yaml_string(&mut output, "limit", &result.query.limit.to_string());
+    if let Some(q) = &result.query.q {
+        push_yaml_string(&mut output, "q", q);
+    }
+    render_provider_filter(&mut output, result.query.providers.as_deref());
+
+    output.push_str("threads:\n");
+    if result.items.is_empty() {
+        output.push_str("  []\n");
+    } else {
+        for item in &result.items {
+            push_yaml_string_with_indent(&mut output, 2, "provider", &item.provider.to_string());
+            push_yaml_string_with_indent(&mut output, 2, "thread_id", &item.thread_id);
+            push_yaml_string_with_indent(&mut output, 2, "uri", &item.uri);
+            push_yaml_string_with_indent(&mut output, 2, "thread_source", &item.thread_source);
+            if let Some(updated_at) = &item.updated_at {
+                push_yaml_string_with_indent(&mut output, 2, "updated_at", updated_at);
+            }
+            if let Some(matched_preview) = &item.matched_preview {
+                push_yaml_string_with_indent(&mut output, 2, "matched_preview", matched_preview);
+            }
+            if let Some(thread_metadata) = &item.thread_metadata {
+                render_thread_metadata_with_indent(&mut output, 2, thread_metadata);
+            }
+        }
+    }
+
+    render_warnings(&mut output, &result.warnings);
+    output.push_str("---\n");
+    output
+}
+
+pub fn render_path_thread_query_markdown(result: &PathThreadQueryResult) -> String {
+    let mut output = render_path_thread_query_head_markdown(result);
+    output.push('\n');
+    output.push_str("# Threads\n\n");
+    output.push_str(&format!("- Scope Path: `{}`\n", result.query.scope_path));
+    output.push_str(&format!(
+        "- Providers: `{}`\n",
+        format_provider_filter(result.query.providers.as_deref())
+    ));
+    output.push_str(&format!("- Limit: `{}`\n", result.query.limit));
+    if let Some(q) = &result.query.q {
+        output.push_str(&format!("- Query: `{}`\n", q));
+    } else {
+        output.push_str("- Query: `_none_`\n");
+    }
+    output.push_str(&format!("- Matched: `{}`\n\n", result.items.len()));
+
+    if result.items.is_empty() {
+        output.push_str("_No threads found._\n");
+        return output;
+    }
+
+    for (index, item) in result.items.iter().enumerate() {
+        output.push_str(&format!("## {}. `{}`\n\n", index + 1, item.uri));
+        output.push_str(&format!("- Provider: `{}`\n", item.provider));
         output.push_str(&format!("- Thread ID: `{}`\n", item.thread_id));
         output.push_str(&format!("- Thread Source: `{}`\n", item.thread_source));
         if let Some(updated_at) = &item.updated_at {
@@ -661,6 +822,33 @@ pub fn resolve_subagent_view(
 
 fn push_yaml_string(output: &mut String, key: &str, value: &str) {
     output.push_str(&format!("{key}: '{}'\n", yaml_single_quoted(value)));
+}
+
+fn render_provider_filter(output: &mut String, providers: Option<&[ProviderKind]>) {
+    output.push_str("providers:\n");
+    if let Some(providers) = providers {
+        for provider in providers {
+            output.push_str(&format!(
+                "  - '{}'\n",
+                yaml_single_quoted(&provider.to_string())
+            ));
+        }
+    } else {
+        output.push_str("  - 'all'\n");
+    }
+}
+
+fn format_provider_filter(providers: Option<&[ProviderKind]>) -> String {
+    providers.map_or_else(
+        || "all".to_string(),
+        |providers| {
+            providers
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
+    )
 }
 
 fn yaml_single_quoted(value: &str) -> String {
@@ -983,6 +1171,146 @@ fn looks_like_claude_metadata(value: &Value) -> bool {
         || value.get("isSidechain").is_some()
 }
 
+fn scope_path_from_str(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}
+
+fn extract_json_string_at_paths<'a>(value: &'a Value, paths: &[&[&str]]) -> Option<&'a str> {
+    for path in paths {
+        let mut current = value;
+        let mut found = true;
+        for key in *path {
+            let Some(next) = current.get(*key) else {
+                found = false;
+                break;
+            };
+            current = next;
+        }
+        if found && let Some(text) = current.as_str() {
+            return Some(text);
+        }
+    }
+
+    None
+}
+
+fn find_first_string_by_key<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    match value {
+        Value::Object(map) => {
+            if let Some(text) = map.get(key).and_then(Value::as_str) {
+                return Some(text);
+            }
+            for child in map.values() {
+                if let Some(text) = find_first_string_by_key(child, key) {
+                    return Some(text);
+                }
+            }
+            None
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| find_first_string_by_key(item, key)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    }
+}
+
+fn extract_json_scope_path(
+    path: &Path,
+    field_paths: &[&[&str]],
+    fallback_keys: &[&str],
+) -> Option<PathBuf> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(&raw).ok()?;
+    extract_json_string_at_paths(&value, field_paths)
+        .and_then(scope_path_from_str)
+        .or_else(|| {
+            fallback_keys
+                .iter()
+                .find_map(|key| find_first_string_by_key(&value, key))
+                .and_then(scope_path_from_str)
+        })
+}
+
+fn extract_codex_scope_path(path: &Path) -> Option<PathBuf> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    for line in reader.lines().take(QUERY_METADATA_LINE_BUDGET).flatten() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value = serde_json::from_str::<Value>(trimmed).ok()?;
+        match value.get("type").and_then(Value::as_str) {
+            Some("session_meta") | Some("turn_context") => {
+                if let Some(text) =
+                    extract_json_string_at_paths(&value, &[&["payload", "cwd"], &["cwd"]])
+                {
+                    return scope_path_from_str(text);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn extract_claude_scope_path(path: &Path) -> Option<PathBuf> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    for line in reader.lines().take(QUERY_METADATA_LINE_BUDGET).flatten() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value = serde_json::from_str::<Value>(trimmed).ok()?;
+        if looks_like_claude_metadata(&value)
+            && let Some(text) = extract_json_string_at_paths(
+                &value,
+                &[&["cwd"], &["projectPath"], &["originalPath"]],
+            )
+        {
+            return scope_path_from_str(text);
+        }
+    }
+    None
+}
+
+fn extract_pi_scope_path(path: &Path) -> Option<PathBuf> {
+    let file = fs::File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    reader.read_line(&mut line).ok()?;
+    let value = serde_json::from_str::<Value>(line.trim()).ok()?;
+    value
+        .get("cwd")
+        .and_then(Value::as_str)
+        .and_then(scope_path_from_str)
+}
+
+fn extract_amp_scope_path(path: &Path) -> Option<PathBuf> {
+    extract_json_scope_path(path, &[&["cwd"]], &["cwd"])
+}
+
+fn extract_gemini_scope_path(path: &Path) -> Option<PathBuf> {
+    if let Some(project_root_marker_path) = path
+        .ancestors()
+        .skip(1)
+        .map(|ancestor| ancestor.join(".project_root"))
+        .find(|candidate| candidate.exists())
+        && let Ok(contents) = fs::read_to_string(project_root_marker_path)
+        && let Some(scope_path) = scope_path_from_str(contents.trim())
+    {
+        return Some(scope_path);
+    }
+
+    extract_json_scope_path(path, &[&["projectRoot"], &["cwd"]], &["projectRoot", "cwd"])
+}
+
 fn push_thread_metadata_record(
     metadata: &mut Vec<String>,
     seen: &mut BTreeSet<String>,
@@ -1076,6 +1404,39 @@ fn format_thread_metadata_value(value: &Value) -> String {
         Value::Number(number) => number.to_string(),
         Value::String(text) => format_thread_metadata_string(text),
         Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+    }
+}
+
+fn all_provider_kinds() -> Vec<ProviderKind> {
+    vec![
+        ProviderKind::Amp,
+        ProviderKind::Codex,
+        ProviderKind::Claude,
+        ProviderKind::Gemini,
+        ProviderKind::Pi,
+        ProviderKind::Opencode,
+    ]
+}
+
+fn path_matches_scope(scope_path: &Path, requested_path: &Path) -> bool {
+    scope_path == requested_path || scope_path.starts_with(requested_path)
+}
+
+fn collect_candidates_for_provider(
+    provider: ProviderKind,
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+    with_search_text: bool,
+) -> Result<Vec<QueryCandidate>> {
+    match provider {
+        ProviderKind::Amp => Ok(collect_amp_query_candidates(roots, warnings)),
+        ProviderKind::Codex => Ok(collect_codex_query_candidates(roots, warnings)),
+        ProviderKind::Claude => Ok(collect_claude_query_candidates(roots, warnings)),
+        ProviderKind::Gemini => Ok(collect_gemini_query_candidates(roots, warnings)),
+        ProviderKind::Pi => Ok(collect_pi_query_candidates(roots, warnings)),
+        ProviderKind::Opencode => {
+            collect_opencode_query_candidates(roots, warnings, with_search_text)
+        }
     }
 }
 
@@ -4179,6 +4540,7 @@ fn collect_amp_query_candidates(
                 .and_then(|stem| stem.to_str())
                 .map(ToString::to_string)
         },
+        extract_amp_scope_path,
         warnings,
     )
 }
@@ -4197,6 +4559,7 @@ fn collect_codex_query_candidates(
                 .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
         },
         extract_codex_rollout_id,
+        extract_codex_scope_path,
         warnings,
     ));
     candidates.extend(collect_simple_file_candidates(
@@ -4208,6 +4571,7 @@ fn collect_codex_query_candidates(
                 .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
         },
         extract_codex_rollout_id,
+        extract_codex_scope_path,
         warnings,
     ));
     candidates
@@ -4239,7 +4603,14 @@ fn collect_claude_query_candidates(
         }
 
         if let Some((thread_id, uri)) = extract_claude_thread_identity(&path) {
-            candidates.push(make_file_candidate(thread_id, uri, path));
+            let scope_path = extract_claude_scope_path(&path);
+            candidates.push(make_file_candidate(
+                ProviderKind::Claude,
+                thread_id,
+                uri,
+                path,
+                scope_path,
+            ));
         } else {
             warnings.push(format!(
                 "skipped claude transcript with unknown thread identity: {}",
@@ -4317,10 +4688,13 @@ fn collect_gemini_query_candidates(
             continue;
         }
         let session_id = session_id.to_ascii_lowercase();
+        let scope_path = extract_gemini_scope_path(&path);
         candidates.push(make_file_candidate(
+            ProviderKind::Gemini,
             session_id.clone(),
             format!("agents://gemini/{session_id}"),
             path,
+            scope_path,
         ));
     }
 
@@ -4352,10 +4726,13 @@ fn collect_pi_query_candidates(
         match extract_pi_session_id_from_header(&path) {
             Ok(Some(session_id)) => {
                 let session_id = session_id.to_ascii_lowercase();
+                let scope_path = extract_pi_scope_path(&path);
                 candidates.push(make_file_candidate(
+                    ProviderKind::Pi,
                     session_id.clone(),
                     format!("agents://pi/{session_id}"),
                     path,
+                    scope_path,
                 ));
             }
             Ok(None) => {}
@@ -4385,10 +4762,10 @@ fn collect_opencode_query_candidates(
 
     let mut stmt = conn
         .prepare(
-            "SELECT s.id, COALESCE(MAX(m.time_created), 0)
+            "SELECT s.id, s.directory, COALESCE(MAX(m.time_created), 0)
              FROM session s
              LEFT JOIN message m ON m.session_id = s.id
-             GROUP BY s.id
+             GROUP BY s.id, s.directory
              ORDER BY COALESCE(MAX(m.time_created), 0) DESC, s.id DESC",
         )
         .map_err(|source| XurlError::Sqlite {
@@ -4400,7 +4777,8 @@ fn collect_opencode_query_candidates(
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, i64>(2)
                     .ok()
                     .and_then(|stamp| u64::try_from(stamp).ok()),
             ))
@@ -4412,7 +4790,7 @@ fn collect_opencode_query_candidates(
 
     let mut candidates = Vec::new();
     for row in rows {
-        let (session_id, updated_epoch) = row.map_err(|source| XurlError::Sqlite {
+        let (session_id, directory, updated_epoch) = row.map_err(|source| XurlError::Sqlite {
             path: db_path.clone(),
             source,
         })?;
@@ -4430,11 +4808,13 @@ fn collect_opencode_query_candidates(
         };
 
         candidates.push(QueryCandidate {
+            provider: ProviderKind::Opencode,
             thread_id: session_id.clone(),
             uri: format!("agents://opencode/{session_id}"),
             thread_source: format!("{}#session:{session_id}", db_path.display()),
             updated_at: updated_epoch.map(|value| value.to_string()),
             updated_epoch,
+            scope_path: directory.as_deref().and_then(scope_path_from_str),
             search_target,
         });
     }
@@ -4502,16 +4882,18 @@ fn fetch_opencode_search_text(
     Ok(chunks.join("\n"))
 }
 
-fn collect_simple_file_candidates<F, G>(
+fn collect_simple_file_candidates<F, G, H>(
     provider: ProviderKind,
     root: &Path,
     path_filter: F,
     thread_id_extractor: G,
+    scope_path_extractor: H,
     warnings: &mut Vec<String>,
 ) -> Vec<QueryCandidate>
 where
     F: Fn(&Path) -> bool,
     G: Fn(&Path) -> Option<String>,
+    H: Fn(&Path) -> Option<PathBuf>,
 {
     if !root.exists() {
         return Vec::new();
@@ -4538,22 +4920,32 @@ where
             continue;
         };
         candidates.push(make_file_candidate(
+            provider,
             thread_id.clone(),
             format!("agents://{provider}/{thread_id}"),
-            path,
+            path.clone(),
+            scope_path_extractor(&path),
         ));
     }
 
     candidates
 }
 
-fn make_file_candidate(thread_id: String, uri: String, path: PathBuf) -> QueryCandidate {
+fn make_file_candidate(
+    provider: ProviderKind,
+    thread_id: String,
+    uri: String,
+    path: PathBuf,
+    scope_path: Option<PathBuf>,
+) -> QueryCandidate {
     QueryCandidate {
+        provider,
         thread_id,
         uri,
         thread_source: path.display().to_string(),
         updated_at: modified_timestamp_string(&path),
         updated_epoch: file_modified_epoch(&path),
+        scope_path,
         search_target: QuerySearchTarget::File(path),
     }
 }
@@ -4942,6 +5334,7 @@ mod tests {
                 ignored_params: Vec::new(),
             },
             items: vec![ThreadQueryItem {
+                provider: ProviderKind::Codex,
                 thread_id: "019c871c-b1f9-7f60-9c4f-87ed09f13592".to_string(),
                 uri: "agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592".to_string(),
                 thread_source: "/tmp/mock.jsonl".to_string(),

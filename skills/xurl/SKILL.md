@@ -107,6 +107,15 @@ xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
 ```
 
+Query conversations by path:
+
+```bash
+xurl agents:///Users/alice/work/xurl
+xurl 'agents:///Users/alice/work/xurl?q=refactor&limit=5'
+xurl 'agents://.?q=refactor&providers=codex,claude'
+xurl 'agents://~/work/xurl?providers=opencode'
+```
+
 Role-scoped query (session-first, role-fallback):
 
 ```bash
@@ -187,10 +196,11 @@ cat prompt.md | xurl agents://claude -d @-
 - `-o, --output`: write command output to file
 - `--head` and `--data` cannot be combined
 - multiple `-d` values are newline-joined
+- path-scoped query URIs are read/query only; they are not valid write targets
 
 ## URI Reference
 
-URI Anatomy (ASCII):
+Provider-Scoped URI Anatomy (ASCII):
 
 ```text
 [agents://]<provider>[/<token>[/<child_id>]][?<query>]
@@ -221,6 +231,18 @@ Common URI patterns:
 - `agents://<provider>?k=v` with `-d`: create
 - `agents://<provider>/<conversation_id>` with `-d`: append
 
+Path-scoped query forms:
+
+- `agents:///abs/path`: canonical local path query
+- `agents://.`: query using current working directory
+- `agents://./subdir`: query a subdirectory under current working directory
+- `agents://..`: query the parent of current working directory
+- `agents://../repo`: query a sibling path through the parent directory
+- `agents://~`: query the home directory
+- `agents://~/repo`: query a path under the home directory
+
+Path-scoped query returns a list of conversations across providers. Use `providers=...` when you want to restrict results to one or more providers.
+
 Role create behavior by provider:
 
 - `codex`: supported (`[agents.<role>]` in `~/.codex/config.toml` mapped to `--config`)
@@ -234,6 +256,7 @@ Query parameters:
 
 - `q=<keyword>`: filter discovery results by keyword. Use when searching conversations by topic.
 - `limit=<n>`: cap discovery results (default `10`). Use when you want fewer or more results.
+- `providers=<name[,name...]>`: restrict a path-scoped query to selected providers.
 - `<key>=<value>`: in write mode (`-d`), forwarded as `--<key> <value>` to the provider CLI.
 - `<flag>`: in write mode (`-d`), forwarded as `--<flag>` to the provider CLI.
 

@@ -6,13 +6,16 @@ use std::io::{Read, Write};
 
 use clap::Parser;
 use xurl_core::uri::{
-    is_uuid_session_id, parse_collection_query_uri, parse_role_query_uri, parse_role_uri,
+    is_uuid_session_id, parse_collection_query_uri, parse_path_query_uri, parse_role_query_uri,
+    parse_role_uri,
 };
 use xurl_core::{
     AgentsUri, ProviderKind, ProviderRoots, WriteEventSink, WriteOptions, WriteRequest,
-    WriteResult, XurlError, query_threads, render_subagent_view_markdown,
-    render_thread_head_markdown, render_thread_markdown, render_thread_query_head_markdown,
-    render_thread_query_markdown, resolve_subagent_view, resolve_thread, write_thread,
+    WriteResult, XurlError, query_threads, query_threads_by_path,
+    render_path_thread_query_head_markdown, render_path_thread_query_markdown,
+    render_subagent_view_markdown, render_thread_head_markdown, render_thread_markdown,
+    render_thread_query_head_markdown, render_thread_query_markdown, resolve_subagent_view,
+    resolve_thread, write_thread,
 };
 
 #[derive(Debug, Parser)]
@@ -57,6 +60,16 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
     let output = output.as_deref();
 
     if data.is_empty() {
+        if let Some(query) = parse_path_query_uri(&uri)? {
+            let result = query_threads_by_path(&query, &roots)?;
+            let output_body = if head {
+                render_path_thread_query_head_markdown(&result)
+            } else {
+                render_path_thread_query_markdown(&result)
+            };
+            return write_output(output, &output_body);
+        }
+
         if let Some(query) = parse_collection_query_uri(&uri)? {
             let result = query_threads(&query, &roots)?;
             let output_body = if head {
@@ -166,6 +179,12 @@ struct WriteTarget {
 }
 
 fn parse_write_target(input: &str) -> xurl_core::Result<WriteTarget> {
+    if parse_path_query_uri(input)?.is_some() {
+        return Err(XurlError::InvalidMode(
+            "write mode does not support path-scoped query URIs".to_string(),
+        ));
+    }
+
     if let Some(role_uri) = parse_role_uri(input)? {
         let (options, warnings) = build_write_options(role_uri.query, Some(role_uri.role));
         return Ok(WriteTarget {

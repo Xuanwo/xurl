@@ -191,7 +191,18 @@ pub struct ThreadQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PathThreadQuery {
+    pub uri: String,
+    pub scope_path: String,
+    pub providers: Option<Vec<ProviderKind>>,
+    pub q: Option<String>,
+    pub limit: usize,
+    pub ignored_params: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ThreadQueryItem {
+    pub provider: ProviderKind,
     pub thread_id: String,
     pub uri: String,
     pub thread_source: String,
@@ -204,6 +215,14 @@ pub struct ThreadQueryItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ThreadQueryResult {
     pub query: ThreadQuery,
+    pub items: Vec<ThreadQueryItem>,
+    #[serde(skip_serializing)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PathThreadQueryResult {
+    pub query: PathThreadQuery,
     pub items: Vec<ThreadQueryItem>,
     #[serde(skip_serializing)]
     pub warnings: Vec<String>,
