@@ -403,15 +403,14 @@ fn parse_thread_query_pairs(
     Ok((q, limit.unwrap_or(10), ignored_params))
 }
 
-fn parse_path_thread_query_pairs(
-    input: &str,
-    query_raw: &str,
-) -> Result<(
-    Option<String>,
-    usize,
-    Option<Vec<ProviderKind>>,
-    Vec<String>,
-)> {
+struct PathThreadQueryParams {
+    q: Option<String>,
+    limit: usize,
+    providers: Option<Vec<ProviderKind>>,
+    ignored_params: Vec<String>,
+}
+
+fn parse_path_thread_query_pairs(input: &str, query_raw: &str) -> Result<PathThreadQueryParams> {
     let mut q = None::<String>;
     let mut limit = None::<usize>;
     let mut providers = None::<Vec<ProviderKind>>;
@@ -445,7 +444,12 @@ fn parse_path_thread_query_pairs(
         }
     }
 
-    Ok((q, limit.unwrap_or(10), providers, ignored_params))
+    Ok(PathThreadQueryParams {
+        q,
+        limit: limit.unwrap_or(10),
+        providers,
+        ignored_params,
+    })
 }
 
 fn parse_provider_list(input: &str, raw: &str) -> Result<Vec<ProviderKind>> {
@@ -482,15 +486,15 @@ pub fn parse_path_query_uri(input: &str) -> Result<Option<PathThreadQuery>> {
         return Ok(None);
     };
     let raw_query = raw_query.unwrap_or_default();
-    let (q, limit, providers, ignored_params) = parse_path_thread_query_pairs(input, raw_query)?;
+    let params = parse_path_thread_query_pairs(input, raw_query)?;
 
     Ok(Some(PathThreadQuery {
         uri: canonical_path_query_uri(&scope_path, raw_query),
         scope_path: scope_path.display().to_string(),
-        providers,
-        q,
-        limit,
-        ignored_params,
+        providers: params.providers,
+        q: params.q,
+        limit: params.limit,
+        ignored_params: params.ignored_params,
     }))
 }
 
