@@ -251,6 +251,7 @@ Role create behavior by provider:
 - `amp`: returns clear error (non-interactive role create unsupported)
 - `gemini`: returns clear error (non-interactive role create unsupported)
 - `pi`: returns clear error (role create unsupported)
+- `kimi`: read-only (write and role create unsupported)
 
 Query parameters:
 

@@ -38,6 +38,7 @@ Please summarize this thread: agents://codex/xxx_thread
 | <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes | No |
 | <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes | No |
 | <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes | Yes |
+| <img src="https://avatars.githubusercontent.com/u/129152888?s=24&v=4" alt="Kimi logo" width="16" height="16" /> Kimi | Yes | No | No |
 
 ## Usage
 
@@ -150,7 +151,7 @@ xurl [OPTIONS] <URI>
 ```
 
 - `scheme`: optional `agents://` prefix. If omitted, `xurl` treats input as an `agents` URI shorthand.
-- `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`.
+- `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`, `kimi`.
 - `token`: main conversation identifier or role name.
 - `child_id`: child/subagent identifier under a main conversation.
 - `query`: optional key-value parameters, interpreted by context.
