@@ -40,17 +40,21 @@ Please summarize this thread: agents://codex/xxx_thread
 
 ## Providers
 
-| Provider | Query | Create | Role Create |
-| --- | --- | --- | --- |
-| <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | Yes | No |
-| <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes | Yes |
-| <img src="https://www.cursor.com/favicon.ico" alt="Cursor logo" width="16" height="16" /> Cursor | Yes | Yes | No |
-| <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes | Yes |
-| <img src="https://github.com/favicon.ico" alt="GitHub Copilot logo" width="16" height="16" /> GitHub Copilot | Yes | Yes | Yes |
-| <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes | No |
-| <img src="https://avatars.githubusercontent.com/u/129152888?s=24&v=4" alt="Kimi logo" width="16" height="16" /> Kimi | Yes | No | No |
-| <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes | Yes |
-| <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes | No |
+<table>
+  <tr>
+    <td align="center"><img src="https://ampcode.com/amp-mark-color.svg" alt="Amp" width="36" height="36" /><br /><code>agents://amp</code></td>
+    <td align="center"><img src="https://cdn.simpleicons.org/claude" alt="Claude" width="36" height="36" /><br /><code>agents://claude</code></td>
+    <td align="center"><img src="https://avatars.githubusercontent.com/u/14957082?s=200&v=4" alt="Codex" width="36" height="36" /><br /><code>agents://codex</code></td>
+    <td align="center"><img src="https://cdn.simpleicons.org/githubcopilot" alt="GitHub Copilot" width="36" height="36" /><br /><code>agents://copilot</code></td>
+    <td align="center"><img src="https://www.cursor.com/favicon.ico" alt="Cursor" width="36" height="36" /><br /><code>agents://cursor</code></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="https://cdn.simpleicons.org/googlegemini" alt="Gemini" width="36" height="36" /><br /><code>agents://gemini</code></td>
+    <td align="center"><img src="https://avatars.githubusercontent.com/u/129152888?s=200&v=4" alt="Kimi" width="36" height="36" /><br /><code>agents://kimi</code></td>
+    <td align="center"><img src="https://avatars.githubusercontent.com/u/208539476?s=200&v=4" alt="OpenCode" width="36" height="36" /><br /><code>agents://opencode</code></td>
+    <td align="center"><img src=".github/assets/pi-logo-dark.svg" alt="Pi" width="36" height="36" /><br /><code>agents://pi</code></td>
+  </tr>
+</table>
 
 ## Usage
 
