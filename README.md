@@ -6,13 +6,12 @@
 
 ## What xURL Can Do
 
-- Read an agent conversation as markdown.
-- Query recent threads and keyword matches for a provider.
-- Query conversations by local path across providers.
-- Query role-scoped threads with `agents://<provider>/<role>`.
-- Discover subagent/branch navigation targets.
-- Start a new conversation with agents.
-- Continue an existing conversation with follow-up prompts.
+xURL gives you one URI scheme (`agents://`) to **read**, **query**, **discover**, and **write** conversations across multiple AI agent CLIs.
+
+- **Read** a conversation as markdown — `xurl agents://codex/<id>`
+- **Query** threads by provider, keyword, local path, or role — `xurl 'agents://codex?q=refactor'`
+- **Discover** child targets and metadata before drilling down — `xurl -I agents://codex/<id>`
+- **Write** to start or continue a conversation — `xurl agents://codex -d "hello"`
 
 ## Quick Start
 
@@ -33,15 +32,14 @@ Please summarize this thread: agents://codex/xxx_thread
 | Provider | Query | Create | Role Create |
 | --- | --- | --- | --- |
 | <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | Yes | No |
-| <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes | Yes |
 | <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes | Yes |
 | <img src="https://www.cursor.com/favicon.ico" alt="Cursor logo" width="16" height="16" /> Cursor | Yes | Yes | No |
+| <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes | Yes |
+| <img src="https://github.com/favicon.ico" alt="GitHub Copilot logo" width="16" height="16" /> GitHub Copilot | Yes | Yes | Yes |
 | <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes | No |
-| <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes | No |
-| <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes | Yes |
 | <img src="https://avatars.githubusercontent.com/u/129152888?s=24&v=4" alt="Kimi logo" width="16" height="16" /> Kimi | Yes | No | No |
-
-Cursor reads local chats from Cursor storage, renders only user-visible text, and excludes hidden reasoning from read/query output. Cursor role-based create and child drill-down are not supported yet.
+| <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes | Yes |
+| <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes | No |
 
 ## Usage
 
@@ -51,6 +49,7 @@ Read an agent conversation:
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 # equivalent shorthand:
 xurl codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+xurl copilot/688628a1-407a-4b4e-b24a-1a250ebf864f
 ```
 
 Query provider threads:
@@ -59,6 +58,7 @@ Query provider threads:
 xurl agents://codex
 xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
+xurl 'agents://copilot?q=resume&limit=5'
 # equivalent shorthand:
 xurl codex
 xurl 'codex?q=spawn_agent'
@@ -109,6 +109,7 @@ Start a new conversation with role URI:
 
 ```bash
 xurl agents://codex/reviewer -d "Review this patch"
+xurl agents://copilot/research -d "Investigate the failing integration test"
 ```
 
 Continue an existing conversation:
@@ -154,7 +155,7 @@ xurl [OPTIONS] <URI>
 ```
 
 - `scheme`: optional `agents://` prefix. If omitted, `xurl` treats input as an `agents` URI shorthand.
-- `provider`: target provider name, such as `codex`, `claude`, `cursor`, `gemini`, `amp`, `pi`, `opencode`, `kimi`.
+- `provider`: target provider name, such as `amp`, `claude`, `codex`, `copilot`, `cursor`, `gemini`, `kimi`, `opencode`, `pi`.
 - `token`: main conversation identifier or role name.
 - `child_id`: child/subagent identifier under a main conversation.
 - `query`: optional key-value parameters, interpreted by context.

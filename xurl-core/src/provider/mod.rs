@@ -9,6 +9,7 @@ use crate::model::{ProviderKind, ResolvedThread, WriteRequest, WriteResult};
 pub mod amp;
 pub mod claude;
 pub mod codex;
+pub mod copilot;
 pub mod cursor;
 pub mod gemini;
 pub mod kimi;
@@ -57,6 +58,7 @@ pub trait Provider {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderRoots {
     pub amp_root: PathBuf,
+    pub copilot_root: PathBuf,
     pub codex_root: PathBuf,
     pub claude_root: PathBuf,
     pub cursor_root: PathBuf,
@@ -78,6 +80,14 @@ impl ProviderRoots {
             .map(PathBuf::from)
             .map(|path| path.join("amp"))
             .unwrap_or_else(|| home.join(".local/share/amp"));
+
+        // Precedence:
+        // 1) COPILOT_HOME (official Copilot CLI config/data root env)
+        // 2) ~/.copilot (Copilot CLI default)
+        let copilot_root = env::var_os("COPILOT_HOME")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".copilot"));
 
         // Precedence:
         // 1) CODEX_HOME (official Codex home env)
@@ -138,6 +148,7 @@ impl ProviderRoots {
 
         Ok(Self {
             amp_root,
+            copilot_root,
             codex_root,
             claude_root,
             cursor_root,

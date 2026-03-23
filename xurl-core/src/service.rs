@@ -24,6 +24,7 @@ use crate::model::{
 use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
 use crate::provider::codex::CodexProvider;
+use crate::provider::copilot::CopilotProvider;
 use crate::provider::cursor::CursorProvider;
 use crate::provider::gemini::GeminiProvider;
 use crate::provider::kimi::KimiProvider;
@@ -169,6 +170,7 @@ pub fn resolve_thread(uri: &AgentsUri, roots: &ProviderRoots) -> Result<Resolved
     let session_id = uri.require_session_id()?;
     match uri.provider {
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(session_id),
+        ProviderKind::Copilot => CopilotProvider::new(&roots.copilot_root).resolve(session_id),
         ProviderKind::Codex => CodexProvider::new(&roots.codex_root).resolve(session_id),
         ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).resolve(session_id),
         ProviderKind::Cursor => CursorProvider::new(&roots.cursor_root).resolve(session_id),
@@ -187,6 +189,7 @@ pub fn write_thread(
 ) -> Result<WriteResult> {
     match provider {
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).write(req, sink),
+        ProviderKind::Copilot => CopilotProvider::new(&roots.copilot_root).write(req, sink),
         ProviderKind::Codex => CodexProvider::new(&roots.codex_root).write(req, sink),
         ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).write(req, sink),
         ProviderKind::Cursor => CursorProvider::new(&roots.cursor_root).write(req, sink),
@@ -224,6 +227,7 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
 
     let mut candidates = match query.provider {
         ProviderKind::Amp => collect_amp_query_candidates(roots, &mut warnings),
+        ProviderKind::Copilot => collect_copilot_query_candidates(roots, &mut warnings),
         ProviderKind::Codex => collect_codex_query_candidates(roots, &mut warnings),
         ProviderKind::Claude => collect_claude_query_candidates(roots, &mut warnings),
         ProviderKind::Cursor => collect_cursor_query_candidates(
@@ -665,7 +669,7 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
 
             render_warnings(&mut output, &warnings);
         }
-        (ProviderKind::Cursor | ProviderKind::Kimi, None) => {
+        (ProviderKind::Copilot | ProviderKind::Cursor | ProviderKind::Kimi, None) => {
             let resolved = resolve_thread(uri, roots)?;
             push_yaml_string(
                 &mut output,
@@ -707,6 +711,7 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
         }
         (
             ProviderKind::Amp
+            | ProviderKind::Copilot
             | ProviderKind::Codex
             | ProviderKind::Claude
             | ProviderKind::Cursor
@@ -845,6 +850,9 @@ pub fn resolve_subagent_view(
 
     match uri.provider {
         ProviderKind::Amp => resolve_amp_subagent_view(uri, roots, list),
+        ProviderKind::Copilot => Err(XurlError::UnsupportedSubagentProvider(
+            ProviderKind::Copilot.to_string(),
+        )),
         ProviderKind::Codex => resolve_codex_subagent_view(uri, roots, list),
         ProviderKind::Claude => resolve_claude_subagent_view(uri, roots, list),
         ProviderKind::Cursor => Err(XurlError::UnsupportedSubagentProvider("cursor".to_string())),
@@ -948,6 +956,7 @@ fn collect_thread_metadata(provider: ProviderKind, path: &Path) -> (Vec<String>,
 
     match provider {
         ProviderKind::Amp => collect_amp_thread_metadata(path, &raw),
+        ProviderKind::Copilot => collect_copilot_thread_metadata(path, &raw),
         ProviderKind::Codex => collect_codex_thread_metadata(path, &raw),
         ProviderKind::Claude => collect_claude_thread_metadata(path, &raw),
         ProviderKind::Cursor => collect_cursor_thread_metadata(path, &raw),
@@ -1002,9 +1011,11 @@ fn collect_query_thread_metadata(provider: ProviderKind, path: &Path) -> Option<
                 _ => false,
             }
         }),
-        ProviderKind::Amp | ProviderKind::Gemini | ProviderKind::Kimi | ProviderKind::Opencode => {
-            collect_thread_metadata(provider, path).0
-        }
+        ProviderKind::Amp
+        | ProviderKind::Copilot
+        | ProviderKind::Gemini
+        | ProviderKind::Kimi
+        | ProviderKind::Opencode => collect_thread_metadata(provider, path).0,
     };
 
     if metadata.is_empty() {
@@ -1159,6 +1170,42 @@ fn collect_pi_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<Strin
 
 fn collect_amp_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
     collect_json_object_thread_metadata(path, raw, ProviderKind::Amp, &["messages"])
+}
+
+fn collect_copilot_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing copilot metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        match value.get("type").and_then(Value::as_str) {
+            Some("session.start") | Some("session.resume") | Some("subagent.selected") => {
+                if push_thread_metadata_record(&mut metadata, &mut seen, &value) {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (metadata, warnings)
 }
 
 fn collect_gemini_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
@@ -1387,6 +1434,35 @@ fn extract_amp_scope_path(path: &Path) -> Option<PathBuf> {
     extract_json_scope_path(path, &[&["cwd"]], &["cwd"])
 }
 
+fn extract_copilot_scope_path(path: &Path) -> Option<PathBuf> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut latest = None::<PathBuf>;
+
+    for line in reader.lines().map_while(std::result::Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("session.start") | Some("session.resume") => {
+                if let Some(text) =
+                    extract_json_string_at_paths(&value, &[&["data", "context", "cwd"]])
+                {
+                    latest = scope_path_from_str(text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    latest
+}
+
 fn extract_gemini_scope_path(path: &Path) -> Option<PathBuf> {
     if let Some(project_root_marker_path) = path
         .ancestors()
@@ -1501,6 +1577,7 @@ fn format_thread_metadata_value(value: &Value) -> String {
 fn all_provider_kinds() -> Vec<ProviderKind> {
     vec![
         ProviderKind::Amp,
+        ProviderKind::Copilot,
         ProviderKind::Codex,
         ProviderKind::Claude,
         ProviderKind::Cursor,
@@ -1523,6 +1600,7 @@ fn collect_candidates_for_provider(
 ) -> Result<Vec<QueryCandidate>> {
     match provider {
         ProviderKind::Amp => Ok(collect_amp_query_candidates(roots, warnings)),
+        ProviderKind::Copilot => Ok(collect_copilot_query_candidates(roots, warnings)),
         ProviderKind::Codex => Ok(collect_codex_query_candidates(roots, warnings)),
         ProviderKind::Claude => Ok(collect_claude_query_candidates(roots, warnings)),
         ProviderKind::Cursor => collect_cursor_query_candidates(roots, warnings, with_search_text),
@@ -4638,6 +4716,66 @@ fn collect_amp_query_candidates(
         extract_amp_scope_path,
         warnings,
     )
+}
+
+fn collect_copilot_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate> {
+    let sessions_root = roots.copilot_root.join("session-state");
+    if !sessions_root.exists() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(&sessions_root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.into_path();
+        let thread_id = if path.file_name().and_then(|name| name.to_str()) == Some("events.jsonl") {
+            path.parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .map(ToString::to_string)
+        } else if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+        {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(ToString::to_string)
+        } else {
+            None
+        };
+
+        let Some(thread_id) = thread_id else {
+            continue;
+        };
+        if !is_uuid_session_id(&thread_id) {
+            warnings.push(format!(
+                "skipped copilot transcript with invalid thread id={thread_id}: {}",
+                path.display()
+            ));
+            continue;
+        }
+
+        let thread_id = thread_id.to_ascii_lowercase();
+        let scope_path = extract_copilot_scope_path(&path);
+        candidates.push(make_file_candidate(
+            ProviderKind::Copilot,
+            thread_id.clone(),
+            format!("agents://copilot/{thread_id}"),
+            path,
+            scope_path,
+        ));
+    }
+
+    candidates
 }
 
 fn collect_codex_query_candidates(

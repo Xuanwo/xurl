@@ -103,6 +103,7 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
 
         let is_subagent_drilldown = match uri.provider {
             xurl_core::ProviderKind::Codex
+            | xurl_core::ProviderKind::Copilot
             | xurl_core::ProviderKind::Claude
             | xurl_core::ProviderKind::Amp
             | xurl_core::ProviderKind::Cursor
@@ -381,6 +382,9 @@ fn user_facing_error(err: &XurlError) -> String {
         XurlError::CommandNotFound { command } if command.contains("codex") => format!(
             "{err}\nhint: write mode needs Codex CLI; run `codex --version`, install Codex CLI if missing, then run `codex login`."
         ),
+        XurlError::CommandNotFound { command } if command.contains("copilot") => format!(
+            "{err}\nhint: write mode needs GitHub Copilot CLI; run `copilot --version`, install Copilot CLI if missing, then authenticate with `copilot login`."
+        ),
         XurlError::CommandNotFound { command } if command.contains("claude") => format!(
             "{err}\nhint: write mode needs Claude CLI; run `claude --version`, install Claude Code if missing, then authenticate."
         ),
@@ -402,6 +406,9 @@ fn user_facing_error(err: &XurlError) -> String {
         XurlError::CommandFailed { command, .. } if command.contains("codex") => {
             format!("{err}\nhint: verify authentication with `codex login` and retry.")
         }
+        XurlError::CommandFailed { command, .. } if command.contains("copilot") => format!(
+            "{err}\nhint: verify authentication with `copilot login`, or retry the equivalent `copilot -p ... --output-format json` command directly once."
+        ),
         XurlError::CommandFailed { command, .. } if command.contains("claude") => format!(
             "{err}\nhint: verify authentication with `claude auth` (or your configured login flow) and retry."
         ),
