@@ -1,284 +1,253 @@
 ---
 name: xurl
-description: Use xurl to read, discover, and write AI agent conversations through agents:// URIs.
+description: >-
+  Use xurl to access AI agent conversations via agents:// URIs. Invoke when the user:
+  gives an agents:// URI, a provider shorthand like provider/..., or a bare thread/session ID;
+  mentions conversations, threads, or sessions from any AI coding agent;
+  wants to search, read, summarize, compare, or continue agent threads;
+  asks what they worked on, what an agent said, or references past agent interactions;
+  wants to delegate work to or start a conversation in another agent.
 ---
 
 ## When to Use
 
-- User gives `agents://...` URI.
-- User gives shorthand URI like `codex/...` or `codex?...`.
-- User asks to list/search provider threads.
-- User asks to query role-scoped threads like `agents://codex/reviewer`.
-- User asks to read or summarize a conversation.
-- User asks to discover child targets before drill-down.
-- User asks to start or continue conversations for providers.
+Trigger this skill when the user's intent involves **any** AI agent conversation — past, present, or to be created. Examples of natural language triggers:
 
-## Installation
+- Gives an `agents://` URI, provider shorthand (`provider/...`), or a bare thread/session ID
+- "Read/show/open this thread/session/conversation ..."
+- "What did I discuss with [agent] about ...?"
+- "Summarize my last [agent] session"
+- "What was I working on in [agent]?"
+- "Search my agent history for ..."
+- "Find the conversation where I fixed the auth bug"
+- "Continue my [agent] conversation about ..."
+- "Send this to [agent] for review" / "Ask [agent] to ..."
+- "What subagents were spawned in that thread?"
+- "Compare what different agents suggested"
+- "Check if I've discussed X before across agents"
 
-Pick up the preferred ways based on current context:
+`[agent]` can be any AI coding agent name (e.g. codex, claude, copilot, cursor, etc.). xurl supports a growing list of providers — just try it. If a provider is not yet supported, xurl will return a clear error.
 
-### Homebrew
+## When NOT to Use
 
-Install via Homebrew tap:
+- General questions about AI agents that don't involve their conversation data
+- Tasks fully within the current agent session with no cross-agent context needed
+- Questions about agent capabilities rather than their conversation history
+
+## URI Assembly Guide
+
+You are responsible for constructing the correct `xurl` command from the user's input. The user will rarely give a complete `agents://` URI — you must assemble it.
+
+### Decision Flow
+
+```
+User input → What do I have? → What do I need? → Construct URI → Run xurl
+```
+
+**Step 1: Identify the operation**
+
+| User wants to... | Operation | Required info |
+|---|---|---|
+| Find/list/search conversations | Query | provider OR path; optional keyword |
+| Read/show/summarize a conversation | Read | provider + conversation ID |
+| Inspect metadata or list children | Discover | provider + conversation ID |
+| Start a new conversation | Write (create) | provider; optional role |
+| Continue an existing conversation | Write (append) | provider + conversation ID |
+
+**Step 2: Resolve missing information**
+
+| You have | You're missing | Action |
+|---|---|---|
+| Nothing | Provider + ID | Query by path: `xurl 'agents://.?q=<keyword>'` to search current project across all providers |
+| Provider only | Conversation ID | Query the provider: `xurl <provider>` or `xurl '<provider>?q=<keyword>'`, then pick from results |
+| Bare thread ID only | Provider | Query by path with the ID as keyword: `xurl 'agents://.?q=<id_fragment>'`; or ask the user which provider |
+| Provider + keyword | Conversation ID | Search: `xurl '<provider>?q=<keyword>'`, pick matching ID from results |
+| Provider + ID | Nothing | Ready — construct URI directly |
+
+**Step 3: Construct and run**
+
+Assemble the URI: `agents://<provider>/<conversation_id>` (or shorthand `<provider>/<conversation_id>`).
+
+### Examples
+
+User says: _"Read thread 019c871c-b1f9-7f60-9c4f-87ed09f13592"_
+→ You have a bare ID but no provider. Search: `xurl 'agents://.?q=019c871c'`, identify the provider from results, then: `xurl <provider>/019c871c-b1f9-7f60-9c4f-87ed09f13592`
+
+User says: _"What did I discuss about refactoring in codex?"_
+→ You have provider (codex) + keyword (refactoring). Search: `xurl 'codex?q=refactoring'`, pick the best match, then read: `xurl codex/<id>`
+
+User says: _"Summarize my last copilot session"_
+→ You have provider (copilot). List recent: `xurl copilot`, take the first result, then read: `xurl copilot/<id>`
+
+User says: _"Have codex review this patch"_
+→ Write operation with provider (codex). Create: `xurl codex -d "Review this patch"` (or with role: `xurl codex/reviewer -d "Review this patch"`)
+
+User says: _"Check if I've discussed the migration across any agent"_
+→ Cross-agent search. Query: `xurl 'agents://.?q=migration'`
+
+## Prerequisites
+
+Verify xurl is installed before running any command:
 
 ```bash
-brew tap xuanwo/tap
-brew install xurl
 xurl --version
 ```
 
-Upgrade via Homebrew:
+If not found, install via the method matching the user's environment:
 
 ```bash
-brew update
-brew upgrade xurl
+brew tap xuanwo/tap && brew install xurl   # Homebrew
+cargo install xurl-cli                      # Cargo / Rust
+uv tool install xuanwo-xurl                 # Python / uv
+npm install -g @xuanwo/xurl                 # npm / Node
 ```
 
-### Cargo Env
+## Workflows
 
-Install via Cargo:
+### 1. Query — Find Conversations
 
-```bash
-cargo install xurl-cli
-xurl --version
-```
-
-Upgrade `xurl` installed by Cargo:
+List recent threads from a provider:
 
 ```bash
-cargo install xurl-cli --force
-xurl --version
-```
-
-### Python Env
-
-install from PyPI via `uv`:
-
-```bash
-uv tool install xuanwo-xurl
-xurl --version
-```
-
-Upgrade `xurl` installed by `uv`:
-
-```bash
-uv tool upgrade xuanwo-xurl
-xurl --version
-```
-
-### Node Env
-
-Temporary usage without install:
-
-```bash
-npx @xuanwo/xurl --help
-```
-
-install globally via npm:
-
-```bash
-npm install -g @xuanwo/xurl
-xurl --version
-```
-
-Upgrade `xurl` installed by npm:
-
-```bash
-npm update -g @xuanwo/xurl
-xurl --version
-```
-
-## Core Workflows
-
-### 1) Query
-
-List latest provider threads:
-
-```bash
-xurl agents://codex
-# equivalent shorthand:
 xurl codex
-xurl copilot
 ```
 
-Keyword query with optional limit (default `10`):
+Search by keyword with optional limit (default 10):
 
 ```bash
-xurl 'agents://codex?q=spawn_agent'
-xurl 'agents://claude?q=agent&limit=5'
-xurl 'agents://copilot?q=resume&limit=5'
+xurl 'agents://codex?q=refactor&limit=5'
 ```
 
-Query conversations by path:
+Search by project directory (across providers):
 
 ```bash
-xurl agents:///Users/alice/work/xurl
-xurl 'agents:///Users/alice/work/xurl?q=refactor&limit=5'
-xurl 'agents://.?q=refactor&providers=codex,claude'
-xurl 'agents://~/work/xurl?providers=opencode'
+xurl 'agents://.?q=migration'                      # current directory
+xurl 'agents:///Users/alice/work/repo?limit=5'     # absolute path
+xurl 'agents://~/work/repo?providers=codex,claude'  # filter providers
 ```
 
-Role-scoped query (session-first, role-fallback):
+Query by role:
 
 ```bash
-xurl agents://codex/reviewer
-# equivalent shorthand:
 xurl codex/reviewer
 ```
 
-Query results include reduced thread metadata when available, so you can inspect fields like `payload.git.branch` or `cwd` directly from the result list.
+Query results include reduced thread metadata (e.g. `payload.git.branch`, `cwd`) for quick inspection.
 
-### 2) Read
+### 2. Read — Display a Conversation
 
 ```bash
-xurl agents://codex/<conversation_id>
-# equivalent shorthand:
 xurl codex/<conversation_id>
-xurl copilot/<conversation_id>
 ```
 
-### 3) Discover
+Output is Markdown: YAML frontmatter (metadata) followed by numbered timeline sections (User/Assistant message pairs).
+
+Save to file:
 
 ```bash
-xurl -I agents://codex/<conversation_id>
+xurl -o /tmp/conversation.md codex/<conversation_id>
 ```
 
-Frontmatter includes the first provider metadata record flattened into readable key-value lines such as `payload.git.branch = ...`, alongside discovery fields like `subagents` or `entries`, and skips oversized instruction-like fields.
-Use returned `subagents` or `entries` URI for next step.
-OpenCode child linkage is validated by sqlite `session.parent_id`.
-
-### 3.1) Drill Down Child Thread
+### 3. Discover — Inspect Metadata and Children
 
 ```bash
-xurl agents://codex/<main_conversation_id>/<agent_id>
+xurl -I codex/<conversation_id>
 ```
 
-### 4) Write
+Returns frontmatter with flattened metadata and discovery links (`subagents`, `entries`). Use returned URIs for drill-down:
+
+```bash
+xurl codex/<main_id>/<child_id>
+```
+
+### 4. Write — Start or Continue Conversations
 
 Create:
 
 ```bash
-xurl agents://codex -d "Start a new conversation"
-# equivalent shorthand:
 xurl codex -d "Start a new conversation"
+xurl codex/reviewer -d "Review this patch"
 ```
 
 Append:
 
 ```bash
-xurl agents://codex/<conversation_id> -d "Continue"
+xurl codex/<conversation_id> -d "Continue with the next step"
 ```
 
-Create with query parameters:
+With provider CLI parameters:
 
 ```bash
-xurl "agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
+xurl "agents://codex?cd=%2FUsers%2Falice%2Frepo&model=gpt-5" -d "Review this"
 ```
 
-Create with role URI:
+Payload from file or stdin:
 
 ```bash
-xurl agents://codex/reviewer -d "Review this patch"
-xurl agents://copilot/research -d "Investigate the failing integration test"
+xurl codex -d @prompt.txt
+cat prompt.md | xurl claude -d @-
 ```
 
-Payload from file/stdin:
+## Multi-Step Patterns
 
-```bash
-xurl agents://codex -d @prompt.txt
-cat prompt.md | xurl agents://claude -d @-
-```
+**Find and read a conversation:**
+`xurl 'codex?q=<keyword>'` → pick ID → `xurl codex/<id>`
+
+**Explore subagents:**
+`xurl -I codex/<id>` → find child links → `xurl codex/<id>/<child_id>`
+
+**Cross-agent project search:**
+`xurl 'agents://.?q=<keyword>'` → read from whichever provider matches
+
+**Resolve a bare thread ID:**
+`xurl 'agents://.?q=<id_fragment>'` → identify provider → `xurl <provider>/<id>`
 
 ## Command Reference
 
-- Base form: `xurl [OPTIONS] <URI>`
-- `-I, --head`: frontmatter/discovery only, including the first provider metadata record flattened into key-value lines when available
-- `-d, --data`: write payload, repeatable
-  - text: `-d "hello"`
-  - file: `-d @prompt.txt`
-  - stdin: `-d @-`
-- `-o, --output`: write command output to file
-- `--head` and `--data` cannot be combined
-- multiple `-d` values are newline-joined
-- path-scoped query URIs are read/query only; they are not valid write targets
-
-## URI Reference
-
-Provider-Scoped URI Anatomy (ASCII):
-
-```text
-[agents://]<provider>[/<token>[/<child_id>]][?<query>]
-|------|  |--------|  |---------------------------|  |------|
- optional   provider         optional path parts        query
- scheme
+```
+xurl [OPTIONS] <URI>
 ```
 
-Component meanings:
+| Flag | Purpose |
+|------|---------|
+| `-I, --head` | Frontmatter/discovery only (cannot combine with `-d`) |
+| `-d, --data <DATA>` | Write payload; repeatable; `-d "text"`, `-d @file`, `-d @-` |
+| `-o, --output <PATH>` | Write output to file |
 
-- `scheme`: optional `agents://` prefix; omitted form is treated as shorthand
-- `provider`: provider name
-- `token`: main conversation id or role name
-- `child_id`: child/subagent id
-- `query`: optional key-value parameters
+Multiple `-d` values are newline-joined. Path-scoped URIs are read/query only (not valid write targets).
 
-Token resolution (`agents://<provider>/<token>`):
+## URI Quick Reference
 
-1. Parse `<token>` as session id first.
-2. If session-id parsing fails, treat `<token>` as role.
+```
+[agents://]<provider>[/<token>[/<child_id>]][?<query>]
+```
 
-Common URI patterns:
+| Pattern | Operation | Example |
+|---------|-----------|---------|
+| `<provider>` | Query recent | `xurl codex` |
+| `<provider>?q=...` | Keyword search | `xurl 'codex?q=bug'` |
+| `<provider>/<id>` | Read conversation | `xurl codex/<uuid>` |
+| `<provider>/<role>` | Role-scoped query | `xurl codex/reviewer` |
+| `<provider>/<id>/<child>` | Read subagent | `xurl codex/<uuid>/<child>` |
+| `<provider>` + `-d` | Create conversation | `xurl codex -d "..."` |
+| `<provider>/<role>` + `-d` | Create with role | `xurl codex/reviewer -d "..."` |
+| `<provider>/<id>` + `-d` | Append to conversation | `xurl codex/<id> -d "..."` |
+| `/abs/path` or `.` or `~` | Path-scoped query | `xurl 'agents://.?q=test'` |
 
-- `agents://<provider>`: discover recent conversations
-- `agents://<provider>/<conversation_id>`: read main conversation
-- `agents://<provider>/<role>`: role-scoped thread query or role-based create with `-d`
-- `agents://<provider>/<conversation_id>/<child_id>`: read child/subagent conversation
-- `agents://<provider>?k=v` with `-d`: create
-- `agents://<provider>/<conversation_id>` with `-d`: append
+Token resolution: `<token>` is parsed as session ID first; if that fails, treated as role name.
 
-Provider notes:
-
-- `cursor`: read/query/create/append supported; rendered and queried text excludes hidden reasoning
-- `cursor`: role-based create unsupported
-- `cursor`: child/subagent drill-down unsupported
-
-Path-scoped query forms:
-
-- `agents:///abs/path`: canonical local path query
-- `agents://.`: query using current working directory
-- `agents://./subdir`: query a subdirectory under current working directory
-- `agents://..`: query the parent of current working directory
-- `agents://../repo`: query a sibling path through the parent directory
-- `agents://~`: query the home directory
-- `agents://~/repo`: query a path under the home directory
-
-Path-scoped query returns a list of conversations across providers. Use `providers=...` when you want to restrict results to one or more providers.
-
-Role create behavior by provider:
-
-- `codex`: supported (`[agents.<role>]` in `~/.codex/config.toml` mapped to `--config`)
-- `claude`: supported (`--agent <role>`)
-- `copilot`: supported (`--agent <agent>`)
-- `opencode`: supported (`--agent <role>`)
-- `amp`: returns clear error (non-interactive role create unsupported)
-- `cursor`: returns clear error (role create unsupported)
-- `gemini`: returns clear error (non-interactive role create unsupported)
-- `pi`: returns clear error (role create unsupported)
-- `kimi`: read-only (write and role create unsupported)
-
-Provider boundaries:
-
-- `copilot`: child drill-down is not exposed yet even though Copilot CLI session events define `subagent.*`; use main thread read/query/create for now.
-
-Query parameters:
-
-- `q=<keyword>`: filter discovery results by keyword. Use when searching conversations by topic.
-- `limit=<n>`: cap discovery results (default `10`). Use when you want fewer or more results.
-- `providers=<name[,name...]>`: restrict a path-scoped query to selected providers.
-- `<key>=<value>`: in write mode (`-d`), forwarded as `--<key> <value>` to the provider CLI.
-- `<flag>`: in write mode (`-d`), forwarded as `--<flag>` to the provider CLI.
+Query parameters: `q=<keyword>`, `limit=<n>` (default 10), `providers=<name,...>` (path-scoped only). In write mode, extra params are forwarded as `--<key> <value>` to the provider CLI.
 
 ## Failure Handling
 
-### `command not found: <agent>`
+xurl returns clear error messages. Act on them directly:
 
-Install the provider CLI, then complete provider authentication before retrying.
+| Error | Recovery |
+|-------|----------|
+| `command not found: xurl` | Install using Prerequisites section |
+| `command not found: <agent>` | The provider CLI is not installed. Install and authenticate it, then retry |
+| Unknown/unsupported provider | The provider may not be supported yet. Suggest the user file an issue at https://github.com/xuanwo/xurl/issues |
+| Write to path-scoped URI | Path URIs are read-only. Use a provider-scoped URI instead |
+| Operation unsupported (role create, write, drill-down, etc.) | Not all providers support all operations. xurl's error message will say what's unsupported. Try without the unsupported feature, or suggest filing an issue |
+
+When xurl returns any unexpected error, show the error to the user and suggest filing an issue at https://github.com/Xuanwo/xurl/issues if the feature should be supported.
