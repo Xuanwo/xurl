@@ -22,6 +22,13 @@
 - Common failure cases include invalid URI syntax, missing provider roots, unresolved session IDs, unreadable files, empty files, and non-UTF-8 payloads (`read_thread_raw` explicitly guards against empty and non-UTF8 data).
 - Metadata warnings and diagnostics are printed on `stderr` but do not change the exit code, making it clear that only `Err` results trigger failure.
 
+## Agent-Oriented Output Contract
+- Treat every user-facing output as agent-facing by default, including stderr diagnostics, warnings, markdown summaries, and discovery metadata.
+- Outputs should not stop at reporting what happened; they should help the caller decide the next action with minimal inference.
+- When an operation fails or a capability is unsupported, prefer output that includes both the current state or evidence and concrete next steps.
+- When evidence exists in the implementation (for example searched roots, requested URI, provider name, unsupported capability, or expected identifier shape), surface that evidence instead of collapsing it into a generic message.
+- Optimize wording for actionability over narration: tell the caller what is true now, what they can try next, and when they should open an issue instead of retrying.
+
 ## Style, Lint & Test Constraints
 - The workspace enforces `cargo clippy` with `all = warn` and `pedantic = warn` at the root (`Cargo.toml` workspace lints); follow Rust formatting conventions and keep identifiers/comments in English.
 - Tests are scoped to the crates (`xurl-cli/tests/cli.rs` for argument coverage and markdown output, `xurl-core` unit tests for file-reading edge cases). Run `cargo test` when touching parsing, rendering, or CLI behaviors.
