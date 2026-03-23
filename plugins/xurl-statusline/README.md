@@ -16,10 +16,10 @@ Ask Claude to use the `xurl-statusline-installer` agent to configure your status
 Copy and send:
 
 ```text
-Use the xurl-statusline-installer agent to configure Claude Code status line for the xurl-statusline plugin.
+Use the xurl-statusline-installer agent to add the xurl agents URI to my Claude Code status line. Keep my existing status line layout and settings intact, and avoid replacing my current status line unless that is the only safe option.
 ```
 
-The agent updates `~/.claude/settings.json` for you. Run it again after plugin updates so the path stays current.
+The agent updates `~/.claude/settings.json` for you and should preserve your existing status line layout whenever possible. Run it again after plugin updates so the path stays current.
 
 The script prints:
 
