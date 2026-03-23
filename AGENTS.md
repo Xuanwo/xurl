@@ -43,12 +43,15 @@
 - A change is not complete if runtime behavior and skill/readme docs diverge.
 
 ## Documentation Audience & Style
-- Treat documentation as user-facing by default. Focus on capabilities and usage, not implementation details.
-- Do not frame docs as "what xurl is not". State what users can do and how to do it.
+- `README.md` and `skills/xurl/SKILL.md` are both user-facing documents.
+- Keep user docs concise and restrained. Focus on what users can do and how to do it.
+- Do not pad user docs with implementation detail, caveat catalogs, or negative capability statements.
+- If a missing capability is important enough to mention, create or update a GitHub issue instead of documenting the limitation in `README.md` or `skills/xurl/SKILL.md`.
+- Only mention a limitation in user docs when omitting it would make the documented command unsafe or misleading; keep that note to one short action-oriented sentence.
 - Keep wording task-oriented and action-first (for example: read, discover, start, continue, save).
 - Prefer conversation-oriented language in user docs. Use `thread/session` only when required by literal CLI syntax, URI forms, or field names.
 - `README.md` is for human users:
-  - prioritize quick onboarding, command examples, option semantics, provider capability boundaries, and troubleshooting.
+  - prioritize quick onboarding, command examples, option semantics, and troubleshooting.
   - avoid internal architecture, backend adapter design, and code-structure explanations unless strictly necessary.
 - `skills/xurl/SKILL.md` is for agent users:
   - prioritize execution workflow (`when to use`, `read/discover/write steps`, command rules, failure handling).
