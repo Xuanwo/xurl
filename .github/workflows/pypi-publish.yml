@@ -19,17 +19,17 @@ jobs:
       version: ${{ steps.read-manifest.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Download release metadata
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: release-metadata
           path: dist/release
@@ -58,7 +58,7 @@ jobs:
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
       - name: Download vendor artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: dist/vendor-artifacts
           pattern: vendor-*
@@ -102,7 +102,7 @@ jobs:
             --output-dir dist/pypi
 
       - name: Upload PyPI distributions
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pypi-dists
           path: dist/pypi/*
@@ -120,7 +120,7 @@ jobs:
       id-token: write
     steps:
       - name: Download PyPI distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: pypi-dists
           path: dist
