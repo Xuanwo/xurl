@@ -10,6 +10,7 @@ pub mod amp;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
+pub mod cursor;
 pub mod gemini;
 pub mod kimi;
 pub mod opencode;
@@ -60,6 +61,7 @@ pub struct ProviderRoots {
     pub copilot_root: PathBuf,
     pub codex_root: PathBuf,
     pub claude_root: PathBuf,
+    pub cursor_root: PathBuf,
     pub gemini_root: PathBuf,
     pub kimi_root: PathBuf,
     pub pi_root: PathBuf,
@@ -102,6 +104,16 @@ impl ProviderRoots {
             .unwrap_or_else(|| home.join(".claude"));
 
         // Precedence:
+        // 1) CURSOR_DATA_DIR
+        // 2) CURSOR_CONFIG_DIR
+        // 3) ~/.cursor
+        let cursor_root = env::var_os("CURSOR_DATA_DIR")
+            .filter(|path| !path.is_empty())
+            .or_else(|| env::var_os("CURSOR_CONFIG_DIR").filter(|path| !path.is_empty()))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".cursor"));
+
+        // Precedence:
         // 1) GEMINI_CLI_HOME/.gemini (official Gemini CLI home env)
         // 2) ~/.gemini (Gemini default)
         let gemini_root = env::var_os("GEMINI_CLI_HOME")
@@ -139,6 +151,7 @@ impl ProviderRoots {
             copilot_root,
             codex_root,
             claude_root,
+            cursor_root,
             gemini_root,
             kimi_root,
             pi_root,

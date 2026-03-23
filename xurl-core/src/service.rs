@@ -25,6 +25,7 @@ use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
 use crate::provider::codex::CodexProvider;
 use crate::provider::copilot::CopilotProvider;
+use crate::provider::cursor::CursorProvider;
 use crate::provider::gemini::GeminiProvider;
 use crate::provider::kimi::KimiProvider;
 use crate::provider::opencode::OpencodeProvider;
@@ -172,6 +173,7 @@ pub fn resolve_thread(uri: &AgentsUri, roots: &ProviderRoots) -> Result<Resolved
         ProviderKind::Copilot => CopilotProvider::new(&roots.copilot_root).resolve(session_id),
         ProviderKind::Codex => CodexProvider::new(&roots.codex_root).resolve(session_id),
         ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).resolve(session_id),
+        ProviderKind::Cursor => CursorProvider::new(&roots.cursor_root).resolve(session_id),
         ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).resolve(session_id),
         ProviderKind::Kimi => KimiProvider::new(&roots.kimi_root).resolve(session_id),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).resolve(session_id),
@@ -190,6 +192,7 @@ pub fn write_thread(
         ProviderKind::Copilot => CopilotProvider::new(&roots.copilot_root).write(req, sink),
         ProviderKind::Codex => CodexProvider::new(&roots.codex_root).write(req, sink),
         ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).write(req, sink),
+        ProviderKind::Cursor => CursorProvider::new(&roots.cursor_root).write(req, sink),
         ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).write(req, sink),
         ProviderKind::Kimi => Err(XurlError::UnsupportedProviderWrite("kimi".to_string())),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).write(req, sink),
@@ -227,6 +230,15 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
         ProviderKind::Copilot => collect_copilot_query_candidates(roots, &mut warnings),
         ProviderKind::Codex => collect_codex_query_candidates(roots, &mut warnings),
         ProviderKind::Claude => collect_claude_query_candidates(roots, &mut warnings),
+        ProviderKind::Cursor => collect_cursor_query_candidates(
+            roots,
+            &mut warnings,
+            query.q.as_deref().is_some_and(|q| !q.trim().is_empty())
+                || query
+                    .role
+                    .as_deref()
+                    .is_some_and(|role| !role.trim().is_empty()),
+        )?,
         ProviderKind::Gemini => collect_gemini_query_candidates(roots, &mut warnings),
         ProviderKind::Kimi => collect_kimi_query_candidates(roots, &mut warnings),
         ProviderKind::Pi => collect_pi_query_candidates(roots, &mut warnings),
@@ -657,7 +669,7 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
 
             render_warnings(&mut output, &warnings);
         }
-        (ProviderKind::Copilot | ProviderKind::Kimi, None) => {
+        (ProviderKind::Copilot | ProviderKind::Cursor | ProviderKind::Kimi, None) => {
             let resolved = resolve_thread(uri, roots)?;
             push_yaml_string(
                 &mut output,
@@ -702,6 +714,7 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
             | ProviderKind::Copilot
             | ProviderKind::Codex
             | ProviderKind::Claude
+            | ProviderKind::Cursor
             | ProviderKind::Gemini
             | ProviderKind::Kimi
             | ProviderKind::Opencode,
@@ -842,6 +855,7 @@ pub fn resolve_subagent_view(
         )),
         ProviderKind::Codex => resolve_codex_subagent_view(uri, roots, list),
         ProviderKind::Claude => resolve_claude_subagent_view(uri, roots, list),
+        ProviderKind::Cursor => Err(XurlError::UnsupportedSubagentProvider("cursor".to_string())),
         ProviderKind::Gemini => resolve_gemini_subagent_view(uri, roots, list),
         ProviderKind::Kimi => Ok(SubagentView::List(SubagentListView {
             query: SubagentQuery {
@@ -945,6 +959,7 @@ fn collect_thread_metadata(provider: ProviderKind, path: &Path) -> (Vec<String>,
         ProviderKind::Copilot => collect_copilot_thread_metadata(path, &raw),
         ProviderKind::Codex => collect_codex_thread_metadata(path, &raw),
         ProviderKind::Claude => collect_claude_thread_metadata(path, &raw),
+        ProviderKind::Cursor => collect_cursor_thread_metadata(path, &raw),
         ProviderKind::Gemini => collect_gemini_thread_metadata(path, &raw),
         ProviderKind::Kimi => (Vec::new(), Vec::new()),
         ProviderKind::Pi => collect_pi_thread_metadata(path, &raw),
@@ -972,6 +987,17 @@ fn collect_query_thread_metadata(provider: ProviderKind, path: &Path) -> Option<
                         object.remove("message");
                     }
                     push_thread_metadata_record(metadata, seen, &metadata_value)
+                } else {
+                    false
+                }
+            })
+        }
+        ProviderKind::Cursor => {
+            collect_query_jsonl_thread_metadata(path, |value, metadata, seen| {
+                if value.get("type").and_then(Value::as_str) == Some("session")
+                    && let Some(session_metadata) = value.get("metadata")
+                {
+                    push_thread_metadata_record(metadata, seen, session_metadata)
                 } else {
                     false
                 }
@@ -1184,6 +1210,40 @@ fn collect_copilot_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<
 
 fn collect_gemini_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
     collect_json_object_thread_metadata(path, raw, ProviderKind::Gemini, &["messages"])
+}
+
+fn collect_cursor_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing cursor metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        if value.get("type").and_then(Value::as_str) == Some("session")
+            && let Some(session_metadata) = value.get("metadata")
+        {
+            push_thread_metadata_record(&mut metadata, &mut seen, session_metadata);
+            break;
+        }
+    }
+
+    (metadata, warnings)
 }
 
 fn collect_opencode_thread_metadata(_path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
@@ -1520,6 +1580,7 @@ fn all_provider_kinds() -> Vec<ProviderKind> {
         ProviderKind::Copilot,
         ProviderKind::Codex,
         ProviderKind::Claude,
+        ProviderKind::Cursor,
         ProviderKind::Gemini,
         ProviderKind::Kimi,
         ProviderKind::Pi,
@@ -1542,6 +1603,7 @@ fn collect_candidates_for_provider(
         ProviderKind::Copilot => Ok(collect_copilot_query_candidates(roots, warnings)),
         ProviderKind::Codex => Ok(collect_codex_query_candidates(roots, warnings)),
         ProviderKind::Claude => Ok(collect_claude_query_candidates(roots, warnings)),
+        ProviderKind::Cursor => collect_cursor_query_candidates(roots, warnings, with_search_text),
         ProviderKind::Gemini => Ok(collect_gemini_query_candidates(roots, warnings)),
         ProviderKind::Kimi => Ok(collect_kimi_query_candidates(roots, warnings)),
         ProviderKind::Pi => Ok(collect_pi_query_candidates(roots, warnings)),
@@ -4791,6 +4853,90 @@ fn collect_claude_query_candidates(
     }
 
     candidates
+}
+
+fn collect_cursor_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+    with_search_text: bool,
+) -> Result<Vec<QueryCandidate>> {
+    let provider = CursorProvider::new(&roots.cursor_root);
+    let chats_root = roots.cursor_root.join("chats");
+    if !chats_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(&chats_root)
+        .min_depth(3)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let path = entry.into_path();
+        if path.file_name().and_then(|name| name.to_str()) != Some("store.db") {
+            continue;
+        }
+
+        let Some(session_id) = path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .map(str::to_ascii_lowercase)
+        else {
+            warnings.push(format!(
+                "skipped cursor store with invalid session directory: {}",
+                path.display()
+            ));
+            continue;
+        };
+
+        if AgentsUri::parse(&format!("cursor://{session_id}")).is_err() {
+            warnings.push(format!(
+                "skipped cursor store with invalid id={session_id} from {}",
+                path.display()
+            ));
+            continue;
+        }
+
+        let materialized = match provider.materialize_store(&path, &session_id) {
+            Ok(materialized) => materialized,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed materializing cursor store {}: {err}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        let search_target = if with_search_text {
+            QuerySearchTarget::Text(materialized.search_text)
+        } else {
+            QuerySearchTarget::File(materialized.path)
+        };
+
+        candidates.push(QueryCandidate {
+            provider: ProviderKind::Cursor,
+            thread_id: session_id.clone(),
+            uri: format!("agents://cursor/{session_id}"),
+            thread_source: path.display().to_string(),
+            updated_at: modified_timestamp_string(&path),
+            updated_epoch: file_modified_epoch(&path),
+            scope_path: materialized
+                .metadata
+                .workspace_path
+                .as_deref()
+                .and_then(scope_path_from_str),
+            search_target,
+        });
+    }
+
+    Ok(candidates)
 }
 
 fn collect_gemini_query_candidates(
