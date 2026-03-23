@@ -27,6 +27,7 @@ const CLAUDE_SESSION_ID: &str = "2823d1df-720a-4c31-ac55-ae8ba726721f";
 const CLAUDE_AGENT_ID: &str = "acompact-69d537";
 const CLAUDE_REAL_MAIN_ID: &str = "b90fc33d-33cb-4027-8558-119e2b56c74e";
 const CLAUDE_REAL_AGENT_ID: &str = "a4f21c7";
+const CURSOR_REAL_SESSION_ID: &str = "6ab9d67a-7ad8-4b98-b347-06fa073cffd0";
 const OPENCODE_REAL_SESSION_ID: &str = "ses_7v2md9kx3c1p";
 const OPENCODE_MAIN_SESSION_ID: &str = "ses_5x7md9kx3c1p";
 const OPENCODE_CHILD_SESSION_ID: &str = "ses_5x7md9kx3c2p";
@@ -559,6 +560,14 @@ fn gemini_real_fixture_root() -> PathBuf {
 
 fn opencode_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/opencode_real_sanitized")
+}
+
+fn cursor_real_fixture_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cursor_real_sanitized")
+}
+
+fn cursor_real_uri() -> String {
+    format!("cursor://{CURSOR_REAL_SESSION_ID}")
 }
 
 fn pi_real_fixture_root() -> PathBuf {
@@ -1959,6 +1968,82 @@ fn opencode_real_fixture_outputs_markdown() {
         .stdout(predicate::str::contains("## 1. User"));
 }
 
+#[test]
+fn cursor_real_fixture_outputs_markdown_without_reasoning() {
+    let fixture_root = cursor_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CURSOR_DATA_DIR", fixture_root)
+        .arg(cursor_real_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains(
+            "hello from sanitized cursor fixture",
+        ))
+        .stdout(predicate::str::contains("Cursor fixture says hello."))
+        .stdout(predicate::str::contains("Internal reasoning should stay hidden").not());
+}
+
+#[test]
+fn cursor_real_fixture_head_includes_thread_metadata() {
+    let fixture_root = cursor_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CURSOR_DATA_DIR", fixture_root)
+        .arg("-I")
+        .arg(cursor_real_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'thread'"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("name = Greeting Agent"))
+        .stdout(predicate::str::contains(
+            "cwd = /tmp/cursor-fixture-project",
+        ));
+}
+
+#[test]
+fn cursor_query_matches_visible_text_but_not_reasoning() {
+    let fixture_root = cursor_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut visible = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    visible
+        .env("CURSOR_DATA_DIR", &fixture_root)
+        .arg("agents://cursor?q=fixture%20says")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "agents://cursor/6ab9d67a-7ad8-4b98-b347-06fa073cffd0",
+        ));
+
+    let mut hidden = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    hidden
+        .env("CURSOR_DATA_DIR", fixture_root)
+        .arg("agents://cursor?q=Internal%20reasoning")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("_No threads found._"));
+}
+
+#[test]
+fn cursor_path_query_uses_workspace_scope() {
+    let fixture_root = cursor_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CURSOR_DATA_DIR", fixture_root)
+        .arg("agents:///tmp/cursor-fixture-project?providers=cursor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "agents://cursor/6ab9d67a-7ad8-4b98-b347-06fa073cffd0",
+        ));
+}
+
 #[cfg(unix)]
 #[test]
 fn write_create_streams_output_and_prints_uri() {
@@ -2704,6 +2789,94 @@ echo '{"type":"assistant","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","m
         .stdout(predicate::str::contains("claude role ok"))
         .stderr(predicate::str::contains(
             "created: agents://claude/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_cursor_create_stream_json_path_works() {
+    let mock = setup_mock_bins(&[(
+        "cursor-agent",
+        r#"
+if [ "$1" = "create-chat" ]; then
+  echo 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  exit 0
+fi
+if [ "$1" = "--resume" ] && [ "$2" = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" ] && [ "$3" = "--print" ] && [ "$4" = "--output-format" ] && [ "$5" = "stream-json" ] && [ "$6" = "--trust" ]; then
+  echo '{"type":"system","subtype":"init","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'
+  echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello from cursor"}]},"session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","timestamp_ms":1}'
+  echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello from cursor"}]},"session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'
+  echo '{"type":"result","subtype":"success","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","result":"hello from cursor"}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://cursor")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from cursor"))
+        .stderr(predicate::str::contains(
+            "created: agents://cursor/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_cursor_append_uses_resume() {
+    let session_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let script = format!(
+        r#"
+if [ "$1" = "--resume" ] && [ "$2" = "{session_id}" ] && [ "$3" = "--print" ] && [ "$4" = "--output-format" ] && [ "$5" = "stream-json" ] && [ "$6" = "--trust" ] && [ "$7" = "continue" ]; then
+  echo '{{"type":"system","subtype":"init","session_id":"{session_id}"}}'
+  echo '{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"cursor append ok"}}]}},"session_id":"{session_id}"}}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    );
+    let mock = setup_mock_bins(&[("cursor-agent", script.as_str())]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg(format!("agents://cursor/{session_id}"))
+        .arg("-d")
+        .arg("continue")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cursor append ok"))
+        .stderr(predicate::str::contains(format!(
+            "updated: agents://cursor/{session_id}",
+        )));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_cursor_role_uri_is_rejected_with_clear_error() {
+    let mock = setup_mock_bins(&[(
+        "cursor-agent",
+        r#"
+echo "should not run" >&2
+exit 99
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://cursor/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "cursor does not support role-based write URI",
         ));
 }
 

@@ -132,6 +132,7 @@ fn extract_timeline_entries(
             ProviderKind::Amp => None,
             ProviderKind::Codex => extract_codex_entry(&value),
             ProviderKind::Claude => extract_claude_entry(&value),
+            ProviderKind::Cursor => extract_cursor_message(&value).map(TimelineEntry::Message),
             ProviderKind::Gemini => None,
             ProviderKind::Kimi => None,
             ProviderKind::Pi => None,
@@ -501,6 +502,10 @@ fn extract_opencode_message(value: &Value) -> Option<ThreadMessage> {
         role,
         text: chunks.join("\n\n"),
     })
+}
+
+fn extract_cursor_message(value: &Value) -> Option<ThreadMessage> {
+    extract_opencode_message(value)
 }
 
 fn extract_amp_text(content: Option<&Value>) -> String {

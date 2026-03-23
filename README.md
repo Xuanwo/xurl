@@ -35,10 +35,13 @@ Please summarize this thread: agents://codex/xxx_thread
 | <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | Yes | No |
 | <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes | Yes |
 | <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes | Yes |
+| <img src="https://www.cursor.com/favicon.ico" alt="Cursor logo" width="16" height="16" /> Cursor | Yes | Yes | No |
 | <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes | No |
 | <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes | No |
 | <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes | Yes |
 | <img src="https://avatars.githubusercontent.com/u/129152888?s=24&v=4" alt="Kimi logo" width="16" height="16" /> Kimi | Yes | No | No |
+
+Cursor reads local chats from Cursor storage, renders only user-visible text, and excludes hidden reasoning from read/query output. Cursor role-based create and child drill-down are not supported yet.
 
 ## Usage
 
@@ -151,7 +154,7 @@ xurl [OPTIONS] <URI>
 ```
 
 - `scheme`: optional `agents://` prefix. If omitted, `xurl` treats input as an `agents` URI shorthand.
-- `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`, `kimi`.
+- `provider`: target provider name, such as `codex`, `claude`, `cursor`, `gemini`, `amp`, `pi`, `opencode`, `kimi`.
 - `token`: main conversation identifier or role name.
 - `child_id`: child/subagent identifier under a main conversation.
 - `query`: optional key-value parameters, interpreted by context.

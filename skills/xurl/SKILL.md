@@ -231,6 +231,12 @@ Common URI patterns:
 - `agents://<provider>?k=v` with `-d`: create
 - `agents://<provider>/<conversation_id>` with `-d`: append
 
+Provider notes:
+
+- `cursor`: read/query/create/append supported; rendered and queried text excludes hidden reasoning
+- `cursor`: role-based create unsupported
+- `cursor`: child/subagent drill-down unsupported
+
 Path-scoped query forms:
 
 - `agents:///abs/path`: canonical local path query
@@ -249,6 +255,7 @@ Role create behavior by provider:
 - `claude`: supported (`--agent <role>`)
 - `opencode`: supported (`--agent <role>`)
 - `amp`: returns clear error (non-interactive role create unsupported)
+- `cursor`: returns clear error (role create unsupported)
 - `gemini`: returns clear error (non-interactive role create unsupported)
 - `pi`: returns clear error (role create unsupported)
 - `kimi`: read-only (write and role create unsupported)
