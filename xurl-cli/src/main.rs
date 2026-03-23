@@ -105,9 +105,10 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
             xurl_core::ProviderKind::Codex
             | xurl_core::ProviderKind::Copilot
             | xurl_core::ProviderKind::Claude
+            | xurl_core::ProviderKind::Amp
+            | xurl_core::ProviderKind::Cursor
             | xurl_core::ProviderKind::Gemini
             | xurl_core::ProviderKind::Kimi
-            | xurl_core::ProviderKind::Amp
             | xurl_core::ProviderKind::Opencode => uri.agent_id.is_some(),
             xurl_core::ProviderKind::Pi => uri.agent_id.as_deref().is_some_and(is_uuid_session_id),
         };
@@ -387,6 +388,9 @@ fn user_facing_error(err: &XurlError) -> String {
         XurlError::CommandNotFound { command } if command.contains("claude") => format!(
             "{err}\nhint: write mode needs Claude CLI; run `claude --version`, install Claude Code if missing, then authenticate."
         ),
+        XurlError::CommandNotFound { command } if command.contains("cursor") => format!(
+            "{err}\nhint: write mode needs Cursor Agent CLI; run `cursor-agent --version`, install Cursor Agent if missing, then authenticate with `cursor-agent login`."
+        ),
         XurlError::CommandNotFound { command } if command.contains("gemini") => format!(
             "{err}\nhint: write mode needs Gemini CLI; run `gemini --version`, install Gemini CLI if missing, then authenticate."
         ),
@@ -407,6 +411,9 @@ fn user_facing_error(err: &XurlError) -> String {
         ),
         XurlError::CommandFailed { command, .. } if command.contains("claude") => format!(
             "{err}\nhint: verify authentication with `claude auth` (or your configured login flow) and retry."
+        ),
+        XurlError::CommandFailed { command, .. } if command.contains("cursor") => format!(
+            "{err}\nhint: verify authentication with `cursor-agent login`, confirm the workspace is trusted for headless mode, and retry."
         ),
         XurlError::CommandFailed { command, .. } if command.contains("gemini") => format!(
             "{err}\nhint: verify Gemini authentication/configuration and retry the command directly once."
