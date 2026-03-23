@@ -132,6 +132,7 @@ fn parse_legacy_target<'a>(scheme: &str, target: &'a str, input: &str) -> Result
         ProviderKind::Copilot => target,
         ProviderKind::Codex => target.strip_prefix("threads/").unwrap_or(target),
         ProviderKind::Claude
+        | ProviderKind::Cursor
         | ProviderKind::Gemini
         | ProviderKind::Kimi
         | ProviderKind::Pi
@@ -188,6 +189,7 @@ impl FromStr for AgentsUri {
             ProviderKind::Codex
             | ProviderKind::Copilot
             | ProviderKind::Claude
+            | ProviderKind::Cursor
             | ProviderKind::Gemini
             | ProviderKind::Kimi
             | ProviderKind::Pi
@@ -213,6 +215,7 @@ impl FromStr for AgentsUri {
             ProviderKind::Codex
             | ProviderKind::Copilot
             | ProviderKind::Claude
+            | ProviderKind::Cursor
             | ProviderKind::Gemini
             | ProviderKind::Kimi
             | ProviderKind::Pi => raw_id.to_ascii_lowercase(),
@@ -336,6 +339,7 @@ fn parse_provider(scheme: &str) -> Result<ProviderKind> {
         "copilot" => Ok(ProviderKind::Copilot),
         "codex" => Ok(ProviderKind::Codex),
         "claude" => Ok(ProviderKind::Claude),
+        "cursor" => Ok(ProviderKind::Cursor),
         "gemini" => Ok(ProviderKind::Gemini),
         "kimi" => Ok(ProviderKind::Kimi),
         "pi" => Ok(ProviderKind::Pi),
@@ -350,6 +354,7 @@ fn looks_like_session_id(provider: ProviderKind, token: &str) -> bool {
         ProviderKind::Codex
         | ProviderKind::Copilot
         | ProviderKind::Claude
+        | ProviderKind::Cursor
         | ProviderKind::Gemini
         | ProviderKind::Kimi
         | ProviderKind::Pi => is_uuid_session_id(token),
@@ -908,17 +913,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_unsupported_scheme() {
-        let err = AgentsUri::parse("cursor://019c871c-b1f9-7f60-9c4f-87ed09f13592")
-            .expect_err("must reject unsupported scheme");
-        assert!(format!("{err}").contains("unsupported scheme"));
+    fn parse_valid_cursor_uri() {
+        let uri = AgentsUri::parse("cursor://019c871c-b1f9-7f60-9c4f-87ed09f13592")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Cursor);
+        assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
+        assert_eq!(uri.agent_id, None);
     }
 
     #[test]
-    fn parse_rejects_invalid_agents_provider() {
-        let err = AgentsUri::parse("agents://cursor/019c871c-b1f9-7f60-9c4f-87ed09f13592")
-            .expect_err("must reject provider");
-        assert!(format!("{err}").contains("unsupported scheme"));
+    fn parse_valid_agents_cursor_uri() {
+        let uri = AgentsUri::parse("agents://cursor/019c871c-b1f9-7f60-9c4f-87ed09f13592")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Cursor);
+        assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
+        assert_eq!(uri.agent_id, None);
     }
 
     #[test]
