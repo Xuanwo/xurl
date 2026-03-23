@@ -1379,7 +1379,7 @@ fn extract_copilot_scope_path(path: &Path) -> Option<PathBuf> {
     let reader = BufReader::new(file);
     let mut latest = None::<PathBuf>;
 
-    for line in reader.lines().flatten() {
+    for line in reader.lines().map_while(std::result::Result::ok) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
