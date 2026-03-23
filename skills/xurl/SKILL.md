@@ -98,6 +98,7 @@ List latest provider threads:
 xurl agents://codex
 # equivalent shorthand:
 xurl codex
+xurl copilot
 ```
 
 Keyword query with optional limit (default `10`):
@@ -105,6 +106,7 @@ Keyword query with optional limit (default `10`):
 ```bash
 xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
+xurl 'agents://copilot?q=resume&limit=5'
 ```
 
 Query conversations by path:
@@ -132,6 +134,7 @@ Query results include reduced thread metadata when available, so you can inspect
 xurl agents://codex/<conversation_id>
 # equivalent shorthand:
 xurl codex/<conversation_id>
+xurl copilot/<conversation_id>
 ```
 
 ### 3) Discover
@@ -176,6 +179,7 @@ Create with role URI:
 
 ```bash
 xurl agents://codex/reviewer -d "Review this patch"
+xurl agents://copilot/research -d "Investigate the failing integration test"
 ```
 
 Payload from file/stdin:
@@ -247,11 +251,16 @@ Role create behavior by provider:
 
 - `codex`: supported (`[agents.<role>]` in `~/.codex/config.toml` mapped to `--config`)
 - `claude`: supported (`--agent <role>`)
+- `copilot`: supported (`--agent <agent>`)
 - `opencode`: supported (`--agent <role>`)
 - `amp`: returns clear error (non-interactive role create unsupported)
 - `gemini`: returns clear error (non-interactive role create unsupported)
 - `pi`: returns clear error (role create unsupported)
 - `kimi`: read-only (write and role create unsupported)
+
+Provider boundaries:
+
+- `copilot`: child drill-down is not exposed yet even though Copilot CLI session events define `subagent.*`; use main thread read/query/create for now.
 
 Query parameters:
 

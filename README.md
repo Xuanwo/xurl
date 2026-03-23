@@ -33,12 +33,15 @@ Please summarize this thread: agents://codex/xxx_thread
 | Provider | Query | Create | Role Create |
 | --- | --- | --- | --- |
 | <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | Yes | No |
+| <img src="https://github.com/favicon.ico" alt="GitHub Copilot logo" width="16" height="16" /> GitHub Copilot | Yes | Yes | Yes |
 | <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes | Yes |
 | <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes | Yes |
 | <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes | No |
 | <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes | No |
 | <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes | Yes |
 | <img src="https://avatars.githubusercontent.com/u/129152888?s=24&v=4" alt="Kimi logo" width="16" height="16" /> Kimi | Yes | No | No |
+
+Copilot currently supports query/read/create/resume flows, but xurl does not yet expose Copilot `subagent.*` events as child drill-down URIs.
 
 ## Usage
 
@@ -48,6 +51,7 @@ Read an agent conversation:
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 # equivalent shorthand:
 xurl codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+xurl copilot/688628a1-407a-4b4e-b24a-1a250ebf864f
 ```
 
 Query provider threads:
@@ -56,6 +60,7 @@ Query provider threads:
 xurl agents://codex
 xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
+xurl 'agents://copilot?q=resume&limit=5'
 # equivalent shorthand:
 xurl codex
 xurl 'codex?q=spawn_agent'
@@ -106,6 +111,7 @@ Start a new conversation with role URI:
 
 ```bash
 xurl agents://codex/reviewer -d "Review this patch"
+xurl agents://copilot/research -d "Investigate the failing integration test"
 ```
 
 Continue an existing conversation:
@@ -151,7 +157,7 @@ xurl [OPTIONS] <URI>
 ```
 
 - `scheme`: optional `agents://` prefix. If omitted, `xurl` treats input as an `agents` URI shorthand.
-- `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`, `kimi`.
+- `provider`: target provider name, such as `codex`, `copilot`, `claude`, `gemini`, `amp`, `pi`, `opencode`, `kimi`.
 - `token`: main conversation identifier or role name.
 - `child_id`: child/subagent identifier under a main conversation.
 - `query`: optional key-value parameters, interpreted by context.
