@@ -1,6 +1,6 @@
 # xURL
 
-`xURL` is a client for AI agent URLs.
+`xURL` is a CLI that reads, queries, and writes AI agent conversations through a unified `agents://` URI scheme.
 
 > Also known as **Xuanwo's URL**.
 
@@ -13,15 +13,26 @@ xURL gives you one URI scheme (`agents://`) to **read**, **query**, **discover**
 - **Discover** child targets and metadata before drilling down — `xurl -I agents://codex/<id>`
 - **Write** to start or continue a conversation — `xurl agents://codex -d "hello"`
 
-## Quick Start
+## Installation
 
-1. Add `xurl` as an agent skill:
+Install as an agent skill:
 
 ```bash
 npx skills add Xuanwo/xurl
 ```
 
-2. Start your agent and ask the agent to summarize a thread:
+Or install the standalone CLI:
+
+```bash
+brew tap xuanwo/tap && brew install xurl   # Homebrew
+cargo install xurl-cli                      # Cargo
+uv tool install xuanwo-xurl                 # Python / uv
+npm install -g @xuanwo/xurl                 # npm
+```
+
+## Quick Start
+
+Ask your agent to summarize a thread:
 
 ```text
 Please summarize this thread: agents://codex/xxx_thread
@@ -43,28 +54,33 @@ Please summarize this thread: agents://codex/xxx_thread
 
 ## Usage
 
-Read an agent conversation:
+> **Note:** The `agents://` scheme prefix is optional — `codex/...` is equivalent to `agents://codex/...`.
+
+### Read
 
 ```bash
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
-# equivalent shorthand:
-xurl codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
-xurl copilot/688628a1-407a-4b4e-b24a-1a250ebf864f
+xurl agents://copilot/688628a1-407a-4b4e-b24a-1a250ebf864f
 ```
 
-Query provider threads:
+Save output to a file:
+
+```bash
+xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+### Query
+
+By provider:
 
 ```bash
 xurl agents://codex
 xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
 xurl 'agents://copilot?q=resume&limit=5'
-# equivalent shorthand:
-xurl codex
-xurl 'codex?q=spawn_agent'
 ```
 
-Query conversations by path:
+By local path:
 
 ```bash
 xurl agents:///Users/alice/work/xurl
@@ -73,23 +89,21 @@ xurl 'agents://.?q=refactor&providers=codex,claude'
 xurl 'agents://~/work/xurl?providers=opencode'
 ```
 
-Query role-scoped threads:
+By role:
 
 ```bash
 xurl agents://codex/reviewer
-# equivalent shorthand:
-xurl codex/reviewer
 ```
 
-Query results include the same reduced thread metadata used by `--head` when it is available, so you can inspect fields like `payload.git.branch` without opening each thread individually.
+Query results include reduced thread metadata when available, so you can inspect fields like `payload.git.branch` without opening each thread individually.
 
-Discover child targets:
+### Discover
 
 ```bash
 xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 ```
 
-Frontmatter includes the first provider metadata record flattened into readable key-value lines such as `payload.git.branch = ...`, and skips oversized instruction-like fields.
+Frontmatter includes provider metadata flattened into readable key-value lines (e.g. `payload.git.branch = ...`), and skips oversized instruction-like fields.
 
 Drill down into a discovered child target:
 
@@ -97,15 +111,15 @@ Drill down into a discovered child target:
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
 ```
 
-Start a new agent conversation:
+### Write
+
+Start a new conversation:
 
 ```bash
 xurl agents://codex -d "Draft a migration plan"
-# equivalent shorthand:
-xurl codex -d "Draft a migration plan"
 ```
 
-Start a new conversation with role URI:
+Start with a role URI:
 
 ```bash
 xurl agents://codex/reviewer -d "Review this patch"
@@ -118,16 +132,10 @@ Continue an existing conversation:
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592 -d "Continue"
 ```
 
-Create with query parameters:
+Pass extra parameters to the provider CLI via query string:
 
 ```bash
 xurl "agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
-```
-
-Save output:
-
-```bash
-xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 ```
 
 ## Command Reference
@@ -192,7 +200,7 @@ Examples:
 agents://codex?q=spawn_agent&limit=10
 agents:///Users/alice/work/xurl?q=refactor&providers=codex,claude
 agents://.?q=refactor&providers=codex
-agents://codex/threads/<conversation_id>
+agents://codex/<conversation_id>
 agents://codex/reviewer
 agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared
 ```
