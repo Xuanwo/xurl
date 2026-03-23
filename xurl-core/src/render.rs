@@ -103,6 +103,11 @@ fn extract_timeline_entries(
     if provider == ProviderKind::Amp {
         return Ok(messages_to_entries(extract_amp_messages(path, raw_jsonl)?));
     }
+    if provider == ProviderKind::Copilot {
+        return Ok(messages_to_entries(extract_copilot_messages(
+            path, raw_jsonl,
+        )?));
+    }
     if provider == ProviderKind::Gemini {
         return Ok(messages_to_entries(extract_gemini_messages(
             path, raw_jsonl,
@@ -130,6 +135,7 @@ fn extract_timeline_entries(
 
         let extracted = match provider {
             ProviderKind::Amp => None,
+            ProviderKind::Copilot => extract_copilot_entry(&value),
             ProviderKind::Codex => extract_codex_entry(&value),
             ProviderKind::Claude => extract_claude_entry(&value),
             ProviderKind::Gemini => None,
@@ -300,6 +306,28 @@ fn extract_amp_messages(path: &Path, raw_json: &str) -> Result<Vec<ThreadMessage
     Ok(messages)
 }
 
+fn extract_copilot_messages(path: &Path, raw_jsonl: &str) -> Result<Vec<ThreadMessage>> {
+    let mut messages = Vec::new();
+
+    for (line_idx, line) in raw_jsonl.lines().enumerate() {
+        let line_no = line_idx + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Some(value) = jsonl::parse_json_line(path, line_no, trimmed)? else {
+            continue;
+        };
+
+        if let Some(message) = extract_copilot_message(&value) {
+            messages.push(message);
+        }
+    }
+
+    Ok(messages)
+}
+
 fn extract_gemini_messages(path: &Path, raw_json: &str) -> Result<Vec<ThreadMessage>> {
     let value =
         serde_json::from_str::<Value>(raw_json).map_err(|source| XurlError::InvalidJsonLine {
@@ -385,6 +413,42 @@ fn extract_codex_message(value: &Value) -> Option<ThreadMessage> {
     }
 
     None
+}
+
+fn extract_copilot_message(value: &Value) -> Option<ThreadMessage> {
+    match value.get("type").and_then(Value::as_str)? {
+        "user.message" => {
+            let text = value
+                .get("data")
+                .and_then(|data| data.get("content"))
+                .and_then(Value::as_str)?;
+            if text.trim().is_empty() {
+                return None;
+            }
+            Some(ThreadMessage {
+                role: MessageRole::User,
+                text: text.to_string(),
+            })
+        }
+        "assistant.message" => {
+            let text = value
+                .get("data")
+                .and_then(|data| data.get("content"))
+                .and_then(Value::as_str)?;
+            if text.trim().is_empty() {
+                return None;
+            }
+            Some(ThreadMessage {
+                role: MessageRole::Assistant,
+                text: text.to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn extract_copilot_entry(value: &Value) -> Option<TimelineEntry> {
+    extract_copilot_message(value).map(TimelineEntry::Message)
 }
 
 fn extract_codex_entry(value: &Value) -> Option<TimelineEntry> {

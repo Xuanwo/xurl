@@ -129,6 +129,7 @@ fn parse_legacy_target<'a>(scheme: &str, target: &'a str, input: &str) -> Result
     let provider = parse_provider(scheme)?;
     let normalized_target = match provider {
         ProviderKind::Amp => target,
+        ProviderKind::Copilot => target,
         ProviderKind::Codex => target.strip_prefix("threads/").unwrap_or(target),
         ProviderKind::Claude
         | ProviderKind::Gemini
@@ -185,6 +186,7 @@ impl FromStr for AgentsUri {
                 return Err(XurlError::InvalidSessionId(raw_id.to_string()));
             }
             ProviderKind::Codex
+            | ProviderKind::Copilot
             | ProviderKind::Claude
             | ProviderKind::Gemini
             | ProviderKind::Kimi
@@ -209,6 +211,7 @@ impl FromStr for AgentsUri {
         let session_id = match provider {
             ProviderKind::Amp => format!("T-{}", raw_id[2..].to_ascii_lowercase()),
             ProviderKind::Codex
+            | ProviderKind::Copilot
             | ProviderKind::Claude
             | ProviderKind::Gemini
             | ProviderKind::Kimi
@@ -219,7 +222,9 @@ impl FromStr for AgentsUri {
         let agent_id = raw_agent_id.map(|agent_id| {
             if provider == ProviderKind::Amp && AMP_SESSION_ID_RE.is_match(&agent_id) {
                 format!("T-{}", agent_id[2..].to_ascii_lowercase())
-            } else if ((provider == ProviderKind::Codex || provider == ProviderKind::Gemini)
+            } else if ((provider == ProviderKind::Codex
+                || provider == ProviderKind::Copilot
+                || provider == ProviderKind::Gemini)
                 && SESSION_ID_RE.is_match(&agent_id))
                 || (provider == ProviderKind::Pi
                     && (is_uuid_session_id(&agent_id) || PI_SHORT_ENTRY_ID_RE.is_match(&agent_id)))
@@ -328,6 +333,7 @@ fn hex_value(ch: u8) -> Option<u8> {
 fn parse_provider(scheme: &str) -> Result<ProviderKind> {
     match scheme {
         "amp" => Ok(ProviderKind::Amp),
+        "copilot" => Ok(ProviderKind::Copilot),
         "codex" => Ok(ProviderKind::Codex),
         "claude" => Ok(ProviderKind::Claude),
         "gemini" => Ok(ProviderKind::Gemini),
@@ -342,6 +348,7 @@ fn looks_like_session_id(provider: ProviderKind, token: &str) -> bool {
     match provider {
         ProviderKind::Amp => AMP_SESSION_ID_RE.is_match(token),
         ProviderKind::Codex
+        | ProviderKind::Copilot
         | ProviderKind::Claude
         | ProviderKind::Gemini
         | ProviderKind::Kimi

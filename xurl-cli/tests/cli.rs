@@ -14,6 +14,7 @@ const REAL_FIXTURE_MAIN_ID: &str = "55fe4488-c6bd-46fa-9390-dab3b8860b95";
 const REAL_FIXTURE_AGENT_ID: &str = "29bf19c3-b83e-401d-8f38-5660b7f67152";
 const AMP_SESSION_ID: &str = "T-019c0797-c402-7389-bd80-d785c98df295";
 const AMP_SUBAGENT_ID: &str = "T-1abc0797-c402-7389-bd80-d785c98df295";
+const COPILOT_REAL_SESSION_ID: &str = "688628a1-407a-4b4e-b24a-1a250ebf864f";
 const GEMINI_SESSION_ID: &str = "29d207db-ca7e-40ba-87f7-e14c9de60613";
 const GEMINI_CHILD_SESSION_ID: &str = "2b112c8a-d80a-4cff-9c8a-6f3e6fbaf7fb";
 const GEMINI_MISSING_CHILD_SESSION_ID: &str = "62f9f98d-c578-4d3a-b4bf-3aaed19889d6";
@@ -557,6 +558,10 @@ fn gemini_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gemini_real_sanitized")
 }
 
+fn copilot_real_fixture_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/copilot_real_sanitized")
+}
+
 fn opencode_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/opencode_real_sanitized")
 }
@@ -631,6 +636,10 @@ fn gemini_missing_subagent_uri() -> String {
 
 fn gemini_real_uri() -> String {
     format!("gemini://{GEMINI_REAL_SESSION_ID}")
+}
+
+fn copilot_real_uri() -> String {
+    format!("copilot://{COPILOT_REAL_SESSION_ID}")
 }
 
 fn pi_uri() -> String {
@@ -1946,6 +1955,76 @@ fn gemini_real_fixture_outputs_markdown() {
 }
 
 #[test]
+fn copilot_real_fixture_outputs_markdown() {
+    let fixture_root = copilot_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("COPILOT_HOME", fixture_root)
+        .arg(copilot_real_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("txt_user_001"))
+        .stdout(predicate::str::contains("txt_assistant_001"));
+}
+
+#[test]
+fn copilot_real_fixture_head_includes_thread_metadata() {
+    let fixture_root = copilot_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("COPILOT_HOME", fixture_root)
+        .arg(copilot_real_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'thread'"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session.start"))
+        .stdout(predicate::str::contains(
+            "data.context.cwd = /redacted/copilot/project",
+        ))
+        .stdout(predicate::str::contains("data.context.branch = main"));
+}
+
+#[test]
+fn copilot_query_returns_fixture_thread() {
+    let fixture_root = copilot_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("COPILOT_HOME", fixture_root)
+        .arg("agents://copilot?q=txt_assistant_001")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "agents://copilot/688628a1-407a-4b4e-b24a-1a250ebf864f",
+        ))
+        .stdout(predicate::str::contains("Match: `"))
+        .stdout(predicate::str::contains("txt_assistant_001"));
+}
+
+#[test]
+fn copilot_child_uri_is_rejected_until_subagent_support_exists() {
+    let fixture_root = copilot_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("COPILOT_HOME", fixture_root)
+        .arg(format!(
+            "agents://copilot/{COPILOT_REAL_SESSION_ID}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        ))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "provider does not support subagent queries: copilot",
+        ));
+}
+
+#[test]
 fn opencode_real_fixture_outputs_markdown() {
     let fixture_root = opencode_real_fixture_root();
     assert!(fixture_root.exists(), "fixture root must exist");
@@ -2704,6 +2783,76 @@ echo '{"type":"assistant","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","m
         .stdout(predicate::str::contains("claude role ok"))
         .stderr(predicate::str::contains(
             "created: agents://claude/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_copilot_create_stream_json_path_works() {
+    let mock = setup_mock_bins(&[(
+        "copilot",
+        r#"
+if [ "$1" != "-p" ] || [ "$2" != "hello" ] || [ "$3" != "--output-format" ] || [ "$4" != "json" ] || [ "$5" != "--allow-all-tools" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+echo '{"type":"assistant.message_delta","data":{"messageId":"m1","deltaContent":"hello from "}}'
+echo '{"type":"assistant.message_delta","data":{"messageId":"m1","deltaContent":"copilot"}}'
+echo '{"type":"result","timestamp":"2026-03-23T10:12:49.235Z","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","exitCode":0}'
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://copilot")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from copilot"))
+        .stderr(predicate::str::contains(
+            "created: agents://copilot/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_copilot_role_uri_sets_agent_flag() {
+    let mock = setup_mock_bins(&[(
+        "copilot",
+        r#"
+if [ "$1" != "-p" ] || [ "$2" != "hello" ] || [ "$3" != "--output-format" ] || [ "$4" != "json" ] || [ "$5" != "--allow-all-tools" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+seen_agent=0
+shift 5
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --agent)
+      shift
+      [ "$1" = "reviewer" ] || exit 8
+      seen_agent=1
+      ;;
+  esac
+  shift
+done
+[ "$seen_agent" -eq 1 ] || exit 9
+echo '{"type":"assistant.message","data":{"messageId":"m1","content":"copilot role ok","toolRequests":[],"interactionId":"i1","reasoningOpaque":"opaque","reasoningText":"reasoning","encryptedContent":"cipher","phase":"final_answer","outputTokens":2}}'
+echo '{"type":"result","timestamp":"2026-03-23T10:12:49.235Z","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","exitCode":0}'
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://copilot/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("copilot role ok"))
+        .stderr(predicate::str::contains(
+            "created: agents://copilot/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         ));
 }
 
