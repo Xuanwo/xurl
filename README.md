@@ -155,6 +155,14 @@ xurl [OPTIONS] <URI>
   - stdin: `-d @-`
 - `-o, --output <PATH>`: write command output to file.
 
+## Error Output
+
+`xurl` writes actionable stderr errors for agents:
+
+- unsupported providers and unsupported capabilities include `requested_uri`, suggested `next_steps`, and the GitHub issue link for requesting support
+- missing local data includes evidence such as `searched_roots` so the next recovery step is explicit
+- provider CLI failures include the command, exit code, and concrete retry guidance
+
 ## URI Reference
 
 ### Agents URI
