@@ -1,0 +1,20 @@
+{
+  "name": "xurl",
+  "owner": {
+    "name": "Xuanwo"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for agents:// workflows built around xurl"
+  },
+  "plugins": [
+    {
+      "name": "xurl-statusline",
+      "source": "./plugins/xurl-statusline",
+      "description": "Show agents://claude URIs in the Claude Code status line",
+      "version": "0.1.0",
+      "author": {
+        "name": "Xuanwo"
+      }
+    }
+  ]
+}

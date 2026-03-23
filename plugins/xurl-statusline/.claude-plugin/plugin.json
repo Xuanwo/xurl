@@ -1,0 +1,8 @@
+{
+  "name": "xurl-statusline",
+  "version": "0.1.0",
+  "description": "Display agents:// Claude URIs in the status line.",
+  "author": {
+    "name": "Xuanwo"
+  }
+}
