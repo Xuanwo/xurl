@@ -13,6 +13,24 @@ xURL gives you one URI scheme (`agents://`) to **read**, **query**, **discover**
 - **Discover** child targets and metadata before drilling down — `xurl -I agents://codex/<id>`
 - **Write** to start or continue a conversation — `xurl agents://codex -d "hello"`
 
+## Providers
+
+<table>
+  <tr>
+    <td align="center"><img src="https://ampcode.com/amp-mark-color.svg" alt="Amp" width="36" height="36" /><br /><code>agents://amp</code></td>
+    <td align="center"><img src="https://cdn.simpleicons.org/claude" alt="Claude" width="36" height="36" /><br /><code>agents://claude</code></td>
+    <td align="center"><img src="https://avatars.githubusercontent.com/u/14957082?s=200&v=4" alt="Codex" width="36" height="36" /><br /><code>agents://codex</code></td>
+    <td align="center"><img src="https://cdn.simpleicons.org/githubcopilot" alt="GitHub Copilot" width="36" height="36" /><br /><code>agents://copilot</code></td>
+    <td align="center"><img src="https://www.cursor.com/favicon.ico" alt="Cursor" width="36" height="36" /><br /><code>agents://cursor</code></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="https://cdn.simpleicons.org/googlegemini" alt="Gemini" width="36" height="36" /><br /><code>agents://gemini</code></td>
+    <td align="center"><img src="https://avatars.githubusercontent.com/u/129152888?s=200&v=4" alt="Kimi" width="36" height="36" /><br /><code>agents://kimi</code></td>
+    <td align="center"><img src="https://avatars.githubusercontent.com/u/208539476?s=200&v=4" alt="OpenCode" width="36" height="36" /><br /><code>agents://opencode</code></td>
+    <td align="center"><img src=".github/assets/pi-logo-dark.svg" alt="Pi" width="36" height="36" /><br /><code>agents://pi</code></td>
+  </tr>
+</table>
+
 ## Installation
 
 Install as an agent skill:
@@ -37,24 +55,6 @@ Ask your agent to summarize a thread:
 ```text
 Please summarize this thread: agents://codex/xxx_thread
 ```
-
-## Providers
-
-<table>
-  <tr>
-    <td align="center"><img src="https://ampcode.com/amp-mark-color.svg" alt="Amp" width="36" height="36" /><br /><code>agents://amp</code></td>
-    <td align="center"><img src="https://cdn.simpleicons.org/claude" alt="Claude" width="36" height="36" /><br /><code>agents://claude</code></td>
-    <td align="center"><img src="https://avatars.githubusercontent.com/u/14957082?s=200&v=4" alt="Codex" width="36" height="36" /><br /><code>agents://codex</code></td>
-    <td align="center"><img src="https://cdn.simpleicons.org/githubcopilot" alt="GitHub Copilot" width="36" height="36" /><br /><code>agents://copilot</code></td>
-    <td align="center"><img src="https://www.cursor.com/favicon.ico" alt="Cursor" width="36" height="36" /><br /><code>agents://cursor</code></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="https://cdn.simpleicons.org/googlegemini" alt="Gemini" width="36" height="36" /><br /><code>agents://gemini</code></td>
-    <td align="center"><img src="https://avatars.githubusercontent.com/u/129152888?s=200&v=4" alt="Kimi" width="36" height="36" /><br /><code>agents://kimi</code></td>
-    <td align="center"><img src="https://avatars.githubusercontent.com/u/208539476?s=200&v=4" alt="OpenCode" width="36" height="36" /><br /><code>agents://opencode</code></td>
-    <td align="center"><img src=".github/assets/pi-logo-dark.svg" alt="Pi" width="36" height="36" /><br /><code>agents://pi</code></td>
-  </tr>
-</table>
 
 ## Usage
 
