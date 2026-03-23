@@ -771,7 +771,9 @@ fn output_flag_returns_error_when_parent_directory_missing() {
         .arg(&output_path)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("error: i/o error on"));
+        .stderr(predicate::str::contains("error: i/o error"))
+        .stderr(predicate::str::contains("path:"))
+        .stderr(predicate::str::contains("next_steps:"));
 }
 
 #[test]
@@ -818,7 +820,11 @@ fn skills_scheme_is_rejected() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "error: unsupported scheme: skills",
+            "error: unsupported scheme `skills`",
+        ))
+        .stderr(predicate::str::contains("supported_providers:"))
+        .stderr(predicate::str::contains(
+            "https://github.com/Xuanwo/xurl/issues/new",
         ));
 }
 
@@ -1149,7 +1155,8 @@ fn unsupported_global_query_form_returns_error() {
         .arg("agents://?q=hello")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("invalid uri"));
+        .stderr(predicate::str::contains("invalid URI"))
+        .stderr(predicate::str::contains("requested_uri: agents://?q=hello"));
 }
 
 #[test]
@@ -1402,7 +1409,11 @@ fn missing_thread_returns_non_zero() {
         .arg(codex_uri())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("thread not found"));
+        .stderr(predicate::str::contains(
+            "thread not found for provider `codex`",
+        ))
+        .stderr(predicate::str::contains("searched_roots:"))
+        .stderr(predicate::str::contains("xurl agents://codex"));
 }
 
 #[test]
@@ -2029,7 +2040,10 @@ fn copilot_child_uri_is_rejected_until_subagent_support_exists() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "provider does not support subagent queries: copilot",
+            "provider `copilot` does not support child/subagent drill-down",
+        ))
+        .stderr(predicate::str::contains(
+            "https://github.com/Xuanwo/xurl/issues/new",
         ));
 }
 
@@ -2564,7 +2578,10 @@ exit 99
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "write mode only supports main thread URIs",
+            "write mode only supports provider or main thread URIs",
+        ))
+        .stderr(predicate::str::contains(
+            "append with `xurl agents://<provider>/<session_id> -d",
         ));
 }
 
@@ -2579,7 +2596,11 @@ fn write_command_not_found_has_hint() {
         .arg("hello")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("hint: write mode needs Codex CLI"));
+        .stderr(predicate::str::contains(
+            "required provider CLI `codex` is not available",
+        ))
+        .stderr(predicate::str::contains("run `codex --version`"))
+        .stderr(predicate::str::contains("install Codex CLI if missing"));
 }
 
 #[cfg(unix)]
@@ -2631,8 +2652,9 @@ exit 99
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "does not support role-based write URI",
-        ));
+            "does not support role-based create in write mode",
+        ))
+        .stderr(predicate::str::contains("xurl agents://amp -d"));
 }
 
 #[cfg(unix)]
@@ -2685,8 +2707,9 @@ exit 99
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "does not support role-based write URI",
-        ));
+            "does not support role-based create in write mode",
+        ))
+        .stderr(predicate::str::contains("xurl agents://gemini -d"));
 }
 
 #[cfg(unix)]
@@ -2738,8 +2761,9 @@ exit 99
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "does not support role-based write URI",
-        ));
+            "does not support role-based create in write mode",
+        ))
+        .stderr(predicate::str::contains("xurl agents://pi -d"));
 }
 
 #[cfg(unix)]
@@ -2955,8 +2979,9 @@ exit 99
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "cursor does not support role-based write URI",
-        ));
+            "provider `cursor` does not support role-based create in write mode",
+        ))
+        .stderr(predicate::str::contains("xurl agents://cursor -d"));
 }
 
 #[cfg(unix)]
