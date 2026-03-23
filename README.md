@@ -6,13 +6,12 @@
 
 ## What xURL Can Do
 
-- Read an agent conversation as markdown.
-- Query recent threads and keyword matches for a provider.
-- Query conversations by local path across providers.
-- Query role-scoped threads with `agents://<provider>/<role>`.
-- Discover subagent/branch navigation targets.
-- Start a new conversation with agents.
-- Continue an existing conversation with follow-up prompts.
+xURL gives you one URI scheme (`agents://`) to **read**, **query**, **discover**, and **write** conversations across multiple AI agent CLIs.
+
+- **Read** a conversation as markdown — `xurl agents://codex/<id>`
+- **Query** threads by provider, keyword, local path, or role — `xurl 'agents://codex?q=refactor'`
+- **Discover** child targets and metadata before drilling down — `xurl -I agents://codex/<id>`
+- **Write** to start or continue a conversation — `xurl agents://codex -d "hello"`
 
 ## Quick Start
 
