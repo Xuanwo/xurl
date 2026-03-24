@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::{fs, io};
 
 use std::io::{Read, Write};
@@ -11,7 +11,7 @@ use xurl_core::uri::{
 };
 use xurl_core::{
     AgentsUri, ProviderKind, ProviderRoots, WriteEventSink, WriteOptions, WriteRequest,
-    WriteResult, XurlError, query_threads, query_threads_by_path,
+    WriteResult, XurlError, maintain_search_index_for_uri, query_threads, query_threads_by_path,
     render_path_thread_query_head_markdown, render_path_thread_query_markdown,
     render_subagent_view_markdown, render_thread_head_markdown, render_thread_markdown,
     render_thread_query_head_markdown, render_thread_query_markdown, resolve_subagent_view,
@@ -21,6 +21,10 @@ use xurl_core::{
 #[derive(Debug, Parser)]
 #[command(name = "xurl", version, about = "Resolve and read code-agent threads")]
 struct Cli {
+    /// Internal execution mode. Hidden because search-index maintenance is an implementation detail.
+    #[arg(short = 'X', hide = true, value_name = "MODE")]
+    internal_mode: Option<String>,
+
     /// Thread URI like agents://codex/<session_id>, codex/<session_id>, agents://claude/<session_id>, agents://pi/<session_id>/<child_or_entry_id>, or legacy forms like codex://<session_id>
     uri: String,
 
@@ -52,6 +56,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> xurl_core::Result<()> {
     let Cli {
+        internal_mode,
         uri,
         head,
         data,
@@ -59,6 +64,10 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
     } = cli;
     let roots = ProviderRoots::from_env_or_home()?;
     let output = output.as_deref();
+
+    if let Some(mode) = internal_mode.as_deref() {
+        return run_internal_mode(mode, &uri, &roots);
+    }
 
     if data.is_empty() {
         if let Some(query) = parse_path_query_uri(&uri)? {
@@ -68,7 +77,9 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
             } else {
                 render_path_thread_query_markdown(&result)
             };
-            return write_output(output, &output_body);
+            write_output(output, &output_body)?;
+            spawn_background_index_worker(&uri);
+            return Ok(());
         }
 
         if let Some(query) = parse_collection_query_uri(&uri)? {
@@ -78,7 +89,9 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
             } else {
                 render_thread_query_markdown(&result)
             };
-            return write_output(output, &output_body);
+            write_output(output, &output_body)?;
+            spawn_background_index_worker(&uri);
+            return Ok(());
         }
 
         if let Some(query) = parse_role_query_uri(&uri)? {
@@ -88,7 +101,9 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
             } else {
                 render_thread_query_markdown(&result)
             };
-            return write_output(output, &output_body);
+            write_output(output, &output_body)?;
+            spawn_background_index_worker(&uri);
+            return Ok(());
         }
 
         let uri = AgentsUri::parse(&uri)?;
@@ -154,6 +169,15 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
     Ok(())
 }
 
+fn run_internal_mode(mode: &str, uri: &str, roots: &ProviderRoots) -> xurl_core::Result<()> {
+    match mode {
+        "index" => maintain_search_index_for_uri(uri, roots),
+        other => Err(XurlError::InvalidMode(format!(
+            "unknown internal mode: {other}"
+        ))),
+    }
+}
+
 fn write_output(path: Option<&Path>, content: &str) -> xurl_core::Result<()> {
     if let Some(path) = path {
         std::fs::write(path, content).map_err(|source| XurlError::Io {
@@ -165,6 +189,22 @@ fn write_output(path: Option<&Path>, content: &str) -> xurl_core::Result<()> {
     }
 
     Ok(())
+}
+
+fn spawn_background_index_worker(uri: &str) {
+    let Ok(current_exe) = std::env::current_exe() else {
+        return;
+    };
+
+    let mut command = Command::new(current_exe);
+    command
+        .arg("-X")
+        .arg("index")
+        .arg(uri)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let _ = command.spawn();
 }
 
 #[derive(Debug, Clone, Copy)]

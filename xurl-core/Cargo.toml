@@ -12,6 +12,10 @@ readme = "../README.md"
 keywords = ["agent", "url", "codex", "claude", "gemini"]
 categories = ["command-line-utilities", "development-tools"]
 
+[[bench]]
+name = "search_index"
+harness = false
+
 [dependencies]
 dirs = "6.0.0"
 grep = "0.4.1"

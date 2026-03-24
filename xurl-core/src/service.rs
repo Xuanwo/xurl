@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ use crate::model::{
 };
 use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
-use crate::provider::codex::CodexProvider;
+use crate::provider::codex::{CodexProvider, CodexStateThreadRecord};
 use crate::provider::copilot::CopilotProvider;
 use crate::provider::cursor::CursorProvider;
 use crate::provider::gemini::GeminiProvider;
@@ -32,7 +32,14 @@ use crate::provider::opencode::OpencodeProvider;
 use crate::provider::pi::PiProvider;
 use crate::provider::{Provider, ProviderRoots, WriteEventSink};
 use crate::render;
-use crate::uri::{AgentsUri, is_uuid_session_id};
+use crate::search_index::{
+    IndexedMatch, OwnedSearchIndexDocument, PreparedMatches, ProviderManifestEntry, SearchIndex,
+    SearchIndexCandidate, SearchIndexDocument, SearchIndexKey,
+};
+use crate::uri::{
+    AgentsUri, is_uuid_session_id, parse_collection_query_uri, parse_path_query_uri,
+    parse_role_query_uri,
+};
 
 const STATUS_PENDING_INIT: &str = "pendingInit";
 const STATUS_RUNNING: &str = "running";
@@ -187,7 +194,7 @@ pub fn write_thread(
     req: &WriteRequest,
     sink: &mut dyn WriteEventSink,
 ) -> Result<WriteResult> {
-    match provider {
+    let result = match provider {
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).write(req, sink),
         ProviderKind::Copilot => CopilotProvider::new(&roots.copilot_root).write(req, sink),
         ProviderKind::Codex => CodexProvider::new(&roots.codex_root).write(req, sink),
@@ -197,7 +204,10 @@ pub fn write_thread(
         ProviderKind::Kimi => Err(XurlError::UnsupportedProviderWrite("kimi".to_string())),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).write(req, sink),
         ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).write(req, sink),
-    }
+    }?;
+
+    let _ = refresh_index_for_provider_session(provider, roots, &result.session_id);
+    Ok(result)
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +224,7 @@ struct QueryCandidate {
     thread_source: String,
     updated_at: Option<String>,
     updated_epoch: Option<u64>,
+    source_fingerprint: String,
     scope_path: Option<PathBuf>,
     search_target: QuerySearchTarget,
 }
@@ -224,6 +235,14 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
         .iter()
         .map(|key| format!("ignored query parameter: {key}"))
         .collect::<Vec<_>>();
+
+    if let Some(items) = try_query_threads_fast_path(query, roots)? {
+        return Ok(ThreadQueryResult {
+            query: query.clone(),
+            items,
+            warnings,
+        });
+    }
 
     let mut candidates = match query.provider {
         ProviderKind::Amp => collect_amp_query_candidates(roots, &mut warnings),
@@ -269,6 +288,12 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
         .map(str::trim)
         .filter(|q| !q.is_empty());
     let keyword_filter = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    let (mut search_index, index_warnings) = SearchIndex::open_best_effort();
+    warnings.extend(index_warnings);
+    let prepared_role_matches =
+        prepare_indexed_matches(search_index.as_mut(), &candidates, role_filter)?;
+    let prepared_keyword_matches =
+        prepare_indexed_matches(search_index.as_mut(), &candidates, keyword_filter)?;
     let mut items = Vec::new();
     for candidate in &candidates {
         if items.len() >= query.limit {
@@ -277,14 +302,22 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
 
         let mut role_preview = None::<String>;
         if let Some(role_filter) = role_filter {
-            role_preview = match_candidate_preview(candidate, role_filter)?;
+            role_preview = match_candidate_preview_with_index(
+                candidate,
+                role_filter,
+                prepared_role_matches.as_ref(),
+            )?;
             if role_preview.is_none() {
                 continue;
             }
         }
 
         let matched_preview = if let Some(keyword_filter) = keyword_filter {
-            let matched_preview = match_candidate_preview(candidate, keyword_filter)?;
+            let matched_preview = match_candidate_preview_with_index(
+                candidate,
+                keyword_filter,
+                prepared_keyword_matches.as_ref(),
+            )?;
             if matched_preview.is_none() {
                 continue;
             }
@@ -329,6 +362,15 @@ pub fn query_threads_by_path(
     let providers = query.providers.clone().unwrap_or_else(all_provider_kinds);
     let keyword_filter = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
     let requested_path = PathBuf::from(&query.scope_path);
+
+    if let Some(items) = try_query_threads_by_path_fast_path(query, roots, &requested_path)? {
+        return Ok(PathThreadQueryResult {
+            query: query.clone(),
+            items,
+            warnings,
+        });
+    }
+
     let mut candidates = Vec::new();
     for provider in providers.iter().copied() {
         candidates.extend(collect_candidates_for_provider(
@@ -346,6 +388,10 @@ pub fn query_threads_by_path(
             .is_some_and(|scope_path| path_matches_scope(scope_path, &requested_path))
     });
     candidates.sort_by_key(|candidate| Reverse(candidate.updated_epoch.unwrap_or(0)));
+    let (mut search_index, index_warnings) = SearchIndex::open_best_effort();
+    warnings.extend(index_warnings);
+    let prepared_keyword_matches =
+        prepare_indexed_matches(search_index.as_mut(), &candidates, keyword_filter)?;
 
     if query.limit == 0 {
         return Ok(PathThreadQueryResult {
@@ -362,7 +408,11 @@ pub fn query_threads_by_path(
         }
 
         let matched_preview = if let Some(keyword_filter) = keyword_filter {
-            let matched_preview = match_candidate_preview(candidate, keyword_filter)?;
+            let matched_preview = match_candidate_preview_with_index(
+                candidate,
+                keyword_filter,
+                prepared_keyword_matches.as_ref(),
+            )?;
             if matched_preview.is_none() {
                 continue;
             }
@@ -391,6 +441,157 @@ pub fn query_threads_by_path(
         query: query.clone(),
         items,
         warnings,
+    })
+}
+
+pub fn maintain_search_index_for_uri(input: &str, roots: &ProviderRoots) -> Result<()> {
+    let (mut search_index, _) = SearchIndex::open_best_effort();
+    let Some(search_index) = search_index.as_mut() else {
+        return Ok(());
+    };
+    if !search_index.try_acquire_worker_lease()? {
+        return Ok(());
+    }
+
+    let result = maintain_search_index_for_uri_locked(input, roots, search_index);
+    let release_result = search_index.release_worker_lease();
+    result?;
+    release_result?;
+    Ok(())
+}
+
+fn maintain_search_index_for_uri_locked(
+    input: &str,
+    roots: &ProviderRoots,
+    search_index: &mut SearchIndex,
+) -> Result<()> {
+    if let Some(query) = parse_path_query_uri(input)? {
+        let providers = query.providers.unwrap_or_else(all_provider_kinds);
+        let requested_path = PathBuf::from(&query.scope_path);
+        let mut warnings = Vec::new();
+        let mut candidates = Vec::new();
+        for provider in providers {
+            let provider_candidates = if provider == ProviderKind::Codex {
+                collect_codex_index_candidates(roots, &mut warnings, search_index)?
+            } else {
+                collect_candidates_for_provider(provider, roots, &mut warnings, true)?
+            };
+            candidates.extend(provider_candidates);
+        }
+        candidates.retain(|candidate| {
+            candidate
+                .scope_path
+                .as_deref()
+                .is_some_and(|scope_path| path_matches_scope(scope_path, &requested_path))
+        });
+        return refresh_candidates_search_index(&candidates, search_index);
+    }
+
+    if let Some(query) = parse_collection_query_uri(input)? {
+        let mut warnings = Vec::new();
+        let candidates = if query.provider == ProviderKind::Codex {
+            collect_codex_index_candidates(roots, &mut warnings, search_index)?
+        } else {
+            collect_candidates_for_provider(query.provider, roots, &mut warnings, true)?
+        };
+        return refresh_candidates_search_index(&candidates, search_index);
+    }
+
+    if let Some(query) = parse_role_query_uri(input)? {
+        let mut warnings = Vec::new();
+        let candidates = if query.provider == ProviderKind::Codex {
+            collect_codex_index_candidates(roots, &mut warnings, search_index)?
+        } else {
+            collect_candidates_for_provider(query.provider, roots, &mut warnings, true)?
+        };
+        return refresh_candidates_search_index(&candidates, search_index);
+    }
+
+    let mut uri = AgentsUri::parse(input)?;
+    if uri.agent_id.is_some() {
+        uri = main_thread_uri(&uri);
+    }
+    if uri.is_collection() {
+        return Ok(());
+    }
+
+    let resolved = resolve_thread(&uri, roots)?;
+    refresh_resolved_thread_search_index(&resolved)
+}
+
+fn refresh_candidates_search_index(
+    candidates: &[QueryCandidate],
+    search_index: &mut SearchIndex,
+) -> Result<()> {
+    let candidate_rows = candidates
+        .iter()
+        .map(|candidate| SearchIndexCandidate {
+            provider: candidate.provider,
+            thread_id: &candidate.thread_id,
+            source_fingerprint: &candidate.source_fingerprint,
+        })
+        .collect::<Vec<_>>();
+    let prepared = search_index.prepare_refresh_candidates(&candidate_rows)?;
+    let stale_candidates = candidates
+        .iter()
+        .filter(|candidate| {
+            let key = SearchIndexKey {
+                provider: candidate.provider,
+                thread_id: candidate.thread_id.clone(),
+            };
+            !prepared.fresh_keys.contains(&key)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut cached_insert_docs = Vec::new();
+    let mut cached_replace_docs = Vec::new();
+    let mut built_insert_docs = Vec::new();
+    let mut built_replace_docs = Vec::new();
+    for candidate in &stale_candidates {
+        let key = SearchIndexKey {
+            provider: candidate.provider,
+            thread_id: candidate.thread_id.clone(),
+        };
+        let exists_in_fts = prepared.existing_fts_keys.contains(&key);
+        if let Some(doc) = prepared.materialized_docs.get(&key) {
+            if exists_in_fts {
+                cached_replace_docs.push(doc.clone());
+            } else {
+                cached_insert_docs.push(doc.clone());
+            }
+        } else {
+            let doc = build_owned_search_index_document(candidate)?;
+            if exists_in_fts {
+                built_replace_docs.push(doc);
+            } else {
+                built_insert_docs.push(doc);
+            }
+        }
+    }
+    search_index.insert_materialized_documents(&cached_insert_docs)?;
+    search_index.replace_materialized_documents(&cached_replace_docs)?;
+    search_index.insert_documents(&built_insert_docs)?;
+    search_index.replace_documents(&built_replace_docs)?;
+    Ok(())
+}
+
+fn build_owned_search_index_document(
+    candidate: &QueryCandidate,
+) -> Result<OwnedSearchIndexDocument> {
+    let search_text = build_candidate_search_text(candidate)?;
+    Ok(OwnedSearchIndexDocument {
+        provider: candidate.provider,
+        thread_id: candidate.thread_id.clone(),
+        uri: candidate.uri.clone(),
+        thread_source: candidate.thread_source.clone(),
+        scope_path: candidate
+            .scope_path
+            .clone()
+            .or_else(|| extract_scope_path_from_raw(candidate.provider, &search_text))
+            .and_then(|path| path.to_str().map(ToString::to_string)),
+        updated_epoch: candidate.updated_epoch,
+        source_fingerprint: candidate.source_fingerprint.clone(),
+        search_text,
     })
 }
 
@@ -559,6 +760,253 @@ fn match_candidate_preview(candidate: &QueryCandidate, keyword: &str) -> Result<
     }
 }
 
+fn try_query_threads_fast_path(
+    query: &ThreadQuery,
+    roots: &ProviderRoots,
+) -> Result<Option<Vec<ThreadQueryItem>>> {
+    if query.limit == 0 {
+        return Ok(None);
+    }
+    let query_filter =
+        QueryFastPathFilter::from_terms(query.q.as_deref(), query.role.as_deref(), None);
+    let Some(query_filter) = query_filter else {
+        return Ok(None);
+    };
+
+    let (search_index, _) = SearchIndex::open_best_effort();
+    let Some(search_index) = search_index.as_ref() else {
+        return Ok(None);
+    };
+    let indexed_matches = search_index.query_matches(
+        query.provider,
+        query_filter.primary_filter,
+        None,
+        fast_path_search_limit(query.limit),
+    )?;
+    build_fast_path_items(indexed_matches, roots, &query_filter, query.limit)
+}
+
+fn try_query_threads_by_path_fast_path(
+    query: &PathThreadQuery,
+    roots: &ProviderRoots,
+    requested_path: &Path,
+) -> Result<Option<Vec<ThreadQueryItem>>> {
+    if query.limit == 0 {
+        return Ok(None);
+    }
+    let query_filter =
+        QueryFastPathFilter::from_terms(query.q.as_deref(), None, Some(requested_path));
+    let Some(query_filter) = query_filter else {
+        return Ok(None);
+    };
+
+    let (search_index, _) = SearchIndex::open_best_effort();
+    let Some(search_index) = search_index.as_ref() else {
+        return Ok(None);
+    };
+    let mut indexed_matches = Vec::new();
+    for provider in &query.providers.clone().unwrap_or_else(all_provider_kinds) {
+        indexed_matches.extend(search_index.query_matches(
+            *provider,
+            query_filter.primary_filter,
+            query_filter.scope_path_prefix,
+            fast_path_search_limit(query.limit),
+        )?);
+    }
+    indexed_matches.sort_by_key(|candidate| Reverse(candidate.updated_epoch.unwrap_or(0)));
+    build_fast_path_items(indexed_matches, roots, &query_filter, query.limit)
+}
+
+fn build_fast_path_items(
+    indexed_matches: Vec<IndexedMatch>,
+    roots: &ProviderRoots,
+    query_filter: &QueryFastPathFilter<'_>,
+    limit: usize,
+) -> Result<Option<Vec<ThreadQueryItem>>> {
+    if indexed_matches.is_empty() {
+        return Ok(None);
+    }
+
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    for indexed_match in indexed_matches {
+        let key = (indexed_match.provider, indexed_match.thread_id.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+        if let Some(item) = materialize_indexed_match(&indexed_match, roots, query_filter)? {
+            items.push(item);
+            if items.len() >= limit {
+                return Ok(Some(items));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn materialize_indexed_match(
+    indexed_match: &IndexedMatch,
+    roots: &ProviderRoots,
+    query_filter: &QueryFastPathFilter<'_>,
+) -> Result<Option<ThreadQueryItem>> {
+    let resolved = match resolve_thread_for_provider_session(
+        indexed_match.provider,
+        roots,
+        &indexed_match.thread_id,
+    ) {
+        Ok(resolved) => resolved,
+        Err(_) => return Ok(None),
+    };
+    if query_filter
+        .scope_path
+        .is_some_and(|scope_path| !resolved_thread_matches_scope(&resolved, scope_path))
+    {
+        return Ok(None);
+    }
+    let raw = read_thread_raw(&resolved.path)?;
+
+    if query_filter
+        .secondary_filter
+        .is_some_and(|filter| match_first_preview_in_text(&raw, filter).is_none())
+    {
+        return Ok(None);
+    }
+    let matched_preview = if let Some(preview_filter) = query_filter.preview_filter {
+        match_first_preview_in_text(&raw, preview_filter)
+    } else {
+        Some(indexed_match.matched_preview.clone())
+    };
+    let Some(matched_preview) = matched_preview else {
+        return Ok(None);
+    };
+
+    Ok(Some(ThreadQueryItem {
+        provider: indexed_match.provider,
+        thread_id: indexed_match.thread_id.clone(),
+        uri: indexed_match.uri.clone(),
+        thread_source: resolved.path.display().to_string(),
+        updated_at: modified_timestamp_string(&resolved.path),
+        matched_preview: Some(matched_preview),
+        thread_metadata: collect_query_thread_metadata(indexed_match.provider, &resolved.path),
+    }))
+}
+
+fn fast_path_search_limit(limit: usize) -> usize {
+    limit.saturating_mul(16).max(limit.saturating_add(32))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct QueryFastPathFilter<'a> {
+    primary_filter: &'a str,
+    secondary_filter: Option<&'a str>,
+    preview_filter: Option<&'a str>,
+    scope_path: Option<&'a Path>,
+    scope_path_prefix: Option<&'a str>,
+}
+
+impl<'a> QueryFastPathFilter<'a> {
+    fn from_terms(
+        keyword: Option<&'a str>,
+        role: Option<&'a str>,
+        scope_path: Option<&'a Path>,
+    ) -> Option<Self> {
+        let keyword = keyword.map(str::trim).filter(|value| !value.is_empty());
+        let role = role.map(str::trim).filter(|value| !value.is_empty());
+        let primary_filter = match (keyword, role) {
+            (Some(keyword), Some(role)) => {
+                if keyword.len() >= role.len() {
+                    keyword
+                } else {
+                    role
+                }
+            }
+            (Some(keyword), None) => keyword,
+            (None, Some(role)) => role,
+            (None, None) => return None,
+        };
+        let preview_filter = keyword.or(role);
+        let secondary_filter = match (keyword, role) {
+            (Some(keyword), Some(role)) if keyword == primary_filter => Some(role),
+            (Some(keyword), Some(role)) if role == primary_filter => Some(keyword),
+            _ => None,
+        };
+        Some(Self {
+            primary_filter,
+            secondary_filter,
+            preview_filter,
+            scope_path,
+            scope_path_prefix: scope_path.and_then(Path::to_str),
+        })
+    }
+}
+
+fn resolved_thread_matches_scope(resolved: &ResolvedThread, scope_path: &Path) -> bool {
+    extract_scope_path_for_provider(resolved.provider, &resolved.path)
+        .as_deref()
+        .is_some_and(|candidate| path_matches_scope(candidate, scope_path))
+}
+
+fn match_candidate_preview_with_index(
+    candidate: &QueryCandidate,
+    keyword: &str,
+    prepared_matches: Option<&PreparedMatches>,
+) -> Result<Option<String>> {
+    let key = SearchIndexKey {
+        provider: candidate.provider,
+        thread_id: candidate.thread_id.clone(),
+    };
+
+    if let Some(prepared_matches) = prepared_matches {
+        if let Some(preview) = prepared_matches.matched_previews.get(&key) {
+            return Ok(Some(preview.clone()));
+        }
+        if prepared_matches.fresh_keys.contains(&key) {
+            return Ok(None);
+        }
+    }
+
+    match_candidate_preview(candidate, keyword)
+}
+
+fn prepare_indexed_matches(
+    search_index: Option<&mut SearchIndex>,
+    candidates: &[QueryCandidate],
+    keyword: Option<&str>,
+) -> Result<Option<PreparedMatches>> {
+    let Some(keyword) = keyword else {
+        return Ok(None);
+    };
+    let Some(search_index) = search_index else {
+        return Ok(None);
+    };
+
+    let rows = candidates
+        .iter()
+        .map(|candidate| SearchIndexCandidate {
+            provider: candidate.provider,
+            thread_id: &candidate.thread_id,
+            source_fingerprint: &candidate.source_fingerprint,
+        })
+        .collect::<Vec<_>>();
+    let prepared = search_index.prepare_matches(&rows, keyword)?;
+    Ok(Some(prepared))
+}
+
+fn build_candidate_search_text(candidate: &QueryCandidate) -> Result<String> {
+    match &candidate.search_target {
+        QuerySearchTarget::File(path) => read_thread_raw(path),
+        QuerySearchTarget::Text(text) => Ok(text.clone()),
+    }
+}
+
+fn extract_scope_path_from_raw(provider: ProviderKind, raw: &str) -> Option<PathBuf> {
+    match provider {
+        ProviderKind::Codex => extract_codex_scope_path_from_raw(raw),
+        _ => None,
+    }
+}
+
 fn match_first_preview_in_file(path: &Path, keyword: &str) -> Result<Option<String>> {
     let mut matcher_builder = RegexMatcherBuilder::new();
     matcher_builder.fixed_strings(true).case_insensitive(true);
@@ -590,7 +1038,7 @@ fn match_first_preview_in_file(path: &Path, keyword: &str) -> Result<Option<Stri
     Ok(preview)
 }
 
-fn match_first_preview_in_text(text: &str, keyword: &str) -> Option<String> {
+pub(crate) fn match_first_preview_in_text(text: &str, keyword: &str) -> Option<String> {
     let matcher = RegexBuilder::new(&regex::escape(keyword))
         .case_insensitive(true)
         .build()
@@ -605,6 +1053,86 @@ fn match_first_preview_in_text(text: &str, keyword: &str) -> Option<String> {
         Some(truncate_preview(text, 160))
     } else {
         Some(truncate_preview(line, 160))
+    }
+}
+
+fn refresh_index_for_provider_session(
+    provider: ProviderKind,
+    roots: &ProviderRoots,
+    session_id: &str,
+) -> Result<()> {
+    let resolved = resolve_thread_for_provider_session(provider, roots, session_id);
+
+    let Ok(resolved) = resolved else {
+        return Ok(());
+    };
+    refresh_resolved_thread_search_index(&resolved)
+}
+
+fn resolve_thread_for_provider_session(
+    provider: ProviderKind,
+    roots: &ProviderRoots,
+    session_id: &str,
+) -> Result<ResolvedThread> {
+    match provider {
+        ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(session_id),
+        ProviderKind::Copilot => CopilotProvider::new(&roots.copilot_root).resolve(session_id),
+        ProviderKind::Codex => CodexProvider::new(&roots.codex_root).resolve(session_id),
+        ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).resolve(session_id),
+        ProviderKind::Cursor => CursorProvider::new(&roots.cursor_root).resolve(session_id),
+        ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).resolve(session_id),
+        ProviderKind::Kimi => KimiProvider::new(&roots.kimi_root).resolve(session_id),
+        ProviderKind::Pi => PiProvider::new(&roots.pi_root).resolve(session_id),
+        ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).resolve(session_id),
+    }
+}
+
+fn refresh_resolved_thread_search_index(resolved: &ResolvedThread) -> Result<()> {
+    let search_text = read_thread_raw(&resolved.path)?;
+    refresh_resolved_thread_search_index_with_raw(resolved, &search_text)
+}
+
+fn refresh_resolved_thread_search_index_with_raw(
+    resolved: &ResolvedThread,
+    search_text: &str,
+) -> Result<()> {
+    let (mut search_index, _) = SearchIndex::open_best_effort();
+    let Some(search_index) = search_index.as_mut() else {
+        return Ok(());
+    };
+
+    let source_fingerprint = file_source_fingerprint(&resolved.path);
+    if search_index.is_fresh(resolved.provider, &resolved.session_id, &source_fingerprint)? {
+        return Ok(());
+    }
+
+    let scope_path = extract_scope_path_for_provider(resolved.provider, &resolved.path);
+    let uri = format!("agents://{}/{}", resolved.provider, resolved.session_id);
+    let thread_source = resolved.path.display().to_string();
+    search_index.replace_document(SearchIndexDocument {
+        provider: resolved.provider,
+        thread_id: &resolved.session_id,
+        uri: &uri,
+        thread_source: &thread_source,
+        scope_path: scope_path.as_ref().and_then(|path| path.to_str()),
+        updated_epoch: file_modified_epoch(&resolved.path),
+        source_fingerprint: &source_fingerprint,
+        search_text,
+    })?;
+    Ok(())
+}
+
+fn extract_scope_path_for_provider(provider: ProviderKind, path: &Path) -> Option<PathBuf> {
+    match provider {
+        ProviderKind::Amp => extract_amp_scope_path(path),
+        ProviderKind::Copilot => extract_copilot_scope_path(path),
+        ProviderKind::Codex => extract_codex_scope_path(path),
+        ProviderKind::Claude => extract_claude_scope_path(path),
+        ProviderKind::Cursor => None,
+        ProviderKind::Gemini => extract_gemini_scope_path(path),
+        ProviderKind::Kimi => None,
+        ProviderKind::Pi => extract_pi_scope_path(path),
+        ProviderKind::Opencode => None,
     }
 }
 
@@ -625,8 +1153,23 @@ fn read_thread_raw(path: &Path) -> Result<String> {
     })
 }
 
+fn file_source_fingerprint(path: &Path) -> String {
+    let Ok(metadata) = fs::metadata(path) else {
+        return "missing".to_string();
+    };
+    let size = metadata.len();
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    format!("file:{modified_ns}:{size}")
+}
+
 pub fn render_thread_markdown(uri: &AgentsUri, resolved: &ResolvedThread) -> Result<String> {
     let raw = read_thread_raw(&resolved.path)?;
+    let _ = refresh_resolved_thread_search_index_with_raw(resolved, &raw);
     let markdown = render::render_markdown(uri, &resolved.path, &raw)?;
     Ok(strip_frontmatter(markdown))
 }
@@ -1377,7 +1920,24 @@ fn extract_json_scope_path(
 fn extract_codex_scope_path(path: &Path) -> Option<PathBuf> {
     let file = fs::File::open(path).ok()?;
     let reader = BufReader::new(file);
-    for line in reader.lines().take(QUERY_METADATA_LINE_BUDGET).flatten() {
+    extract_codex_scope_path_from_lines(
+        reader
+            .lines()
+            .take(QUERY_METADATA_LINE_BUDGET)
+            .filter_map(std::result::Result::ok),
+    )
+}
+
+fn extract_codex_scope_path_from_raw(raw: &str) -> Option<PathBuf> {
+    extract_codex_scope_path_from_lines(
+        raw.lines()
+            .map(str::to_string)
+            .take(QUERY_METADATA_LINE_BUDGET),
+    )
+}
+
+fn extract_codex_scope_path_from_lines(lines: impl IntoIterator<Item = String>) -> Option<PathBuf> {
+    for line in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -4782,6 +5342,11 @@ fn collect_codex_query_candidates(
     roots: &ProviderRoots,
     warnings: &mut Vec<String>,
 ) -> Vec<QueryCandidate> {
+    let sqlite_candidates = collect_codex_query_candidates_from_state_db(roots, warnings);
+    if !sqlite_candidates.is_empty() {
+        return sqlite_candidates;
+    }
+
     let mut candidates = Vec::new();
     candidates.extend(collect_simple_file_candidates(
         ProviderKind::Codex,
@@ -4808,6 +5373,172 @@ fn collect_codex_query_candidates(
         warnings,
     ));
     candidates
+}
+
+fn collect_codex_query_candidates_from_state_db(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate> {
+    let provider = CodexProvider::new(&roots.codex_root);
+    let records = provider.collect_state_thread_records(warnings);
+    if records.is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for record in records {
+        if !record.rollout_path.exists() {
+            continue;
+        }
+        if !is_uuid_session_id(&record.session_id) {
+            warnings.push(format!(
+                "skipped codex sqlite record with invalid thread id={}: {}",
+                record.session_id,
+                record.rollout_path.display()
+            ));
+            continue;
+        }
+        candidates.push(codex_candidate_from_state_record(record));
+    }
+    candidates
+}
+
+fn codex_candidate_from_state_record(record: CodexStateThreadRecord) -> QueryCandidate {
+    let _ = record.archived;
+    let session_id = record.session_id.to_ascii_lowercase();
+    make_file_candidate(
+        ProviderKind::Codex,
+        session_id.clone(),
+        format!("agents://codex/{session_id}"),
+        record.rollout_path.clone(),
+        extract_codex_scope_path(&record.rollout_path),
+    )
+}
+
+fn collect_codex_index_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+    search_index: &mut SearchIndex,
+) -> Result<Vec<QueryCandidate>> {
+    let sqlite_candidates =
+        collect_codex_index_candidates_from_state_db(roots, warnings, search_index)?;
+    if !sqlite_candidates.is_empty() {
+        return Ok(sqlite_candidates);
+    }
+
+    let mut candidates = Vec::new();
+    candidates.extend(collect_simple_file_candidates(
+        ProviderKind::Codex,
+        &roots.codex_root.join("sessions"),
+        |path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+        },
+        extract_codex_rollout_id,
+        |_| None,
+        warnings,
+    ));
+    candidates.extend(collect_simple_file_candidates(
+        ProviderKind::Codex,
+        &roots.codex_root.join("archived_sessions"),
+        |path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+        },
+        extract_codex_rollout_id,
+        |_| None,
+        warnings,
+    ));
+    Ok(candidates)
+}
+
+fn collect_codex_index_candidates_from_state_db(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+    search_index: &mut SearchIndex,
+) -> Result<Vec<QueryCandidate>> {
+    let provider = CodexProvider::new(&roots.codex_root);
+    let watermark = provider.state_manifest_watermark(warnings);
+    if let Some(watermark) = watermark.as_deref() {
+        if let Some(entries) =
+            search_index.load_provider_manifest(ProviderKind::Codex, watermark)?
+        {
+            return Ok(entries
+                .into_iter()
+                .filter_map(codex_candidate_from_manifest_entry)
+                .collect());
+        }
+    }
+
+    let records = provider.collect_state_thread_records(warnings);
+    if records.is_empty() {
+        if let Some(watermark) = watermark.as_deref() {
+            search_index.replace_provider_manifest(ProviderKind::Codex, watermark, &[])?;
+        }
+        return Ok(Vec::new());
+    }
+
+    let mut manifest_entries = Vec::new();
+    let mut candidates = Vec::new();
+    for record in records {
+        if let Some(entry) = codex_manifest_entry_from_state_record(record, warnings) {
+            if let Some(candidate) = codex_candidate_from_manifest_entry(entry.clone()) {
+                candidates.push(candidate);
+            }
+            manifest_entries.push(entry);
+        }
+    }
+    if let Some(watermark) = watermark.as_deref() {
+        search_index.replace_provider_manifest(
+            ProviderKind::Codex,
+            watermark,
+            &manifest_entries,
+        )?;
+    }
+    Ok(candidates)
+}
+
+fn codex_manifest_entry_from_state_record(
+    record: CodexStateThreadRecord,
+    warnings: &mut Vec<String>,
+) -> Option<ProviderManifestEntry> {
+    let _ = record.archived;
+    if !record.rollout_path.exists() {
+        return None;
+    }
+    if !is_uuid_session_id(&record.session_id) {
+        warnings.push(format!(
+            "skipped codex sqlite record with invalid thread id={}: {}",
+            record.session_id,
+            record.rollout_path.display()
+        ));
+        return None;
+    }
+    let thread_id = record.session_id.to_ascii_lowercase();
+    Some(ProviderManifestEntry {
+        provider: ProviderKind::Codex,
+        thread_id: thread_id.clone(),
+        uri: format!("agents://codex/{thread_id}"),
+        thread_source: record.rollout_path.display().to_string(),
+        scope_path: extract_codex_scope_path(&record.rollout_path)
+            .and_then(|path| path.to_str().map(ToString::to_string)),
+    })
+}
+
+fn codex_candidate_from_manifest_entry(entry: ProviderManifestEntry) -> Option<QueryCandidate> {
+    let path = PathBuf::from(&entry.thread_source);
+    if !path.exists() {
+        return None;
+    }
+    Some(make_file_candidate(
+        entry.provider,
+        entry.thread_id.clone(),
+        entry.uri,
+        path,
+        entry.scope_path.map(PathBuf::from),
+    ))
 }
 
 fn collect_claude_query_candidates(
@@ -4927,6 +5658,7 @@ fn collect_cursor_query_candidates(
             thread_source: path.display().to_string(),
             updated_at: modified_timestamp_string(&path),
             updated_epoch: file_modified_epoch(&path),
+            source_fingerprint: file_source_fingerprint(&path),
             scope_path: materialized
                 .metadata
                 .workspace_path
@@ -5171,6 +5903,7 @@ fn collect_opencode_query_candidates(
             thread_source: format!("{}#session:{session_id}", db_path.display()),
             updated_at: updated_epoch.map(|value| value.to_string()),
             updated_epoch,
+            source_fingerprint: format!("opencode-session:{}", updated_epoch.unwrap_or(0)),
             scope_path: directory.as_deref().and_then(scope_path_from_str),
             search_target,
         });
@@ -5302,6 +6035,7 @@ fn make_file_candidate(
         thread_source: path.display().to_string(),
         updated_at: modified_timestamp_string(&path),
         updated_epoch: file_modified_epoch(&path),
+        source_fingerprint: file_source_fingerprint(&path),
         scope_path,
         search_target: QuerySearchTarget::File(path),
     }

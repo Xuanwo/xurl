@@ -8,6 +8,7 @@ pub mod jsonl;
 pub mod model;
 pub mod provider;
 pub mod render;
+mod search_index;
 pub mod service;
 pub mod uri;
 
@@ -20,9 +21,10 @@ pub use model::{
 };
 pub use provider::{ProviderRoots, WriteEventSink};
 pub use service::{
-    query_threads, query_threads_by_path, render_path_thread_query_head_markdown,
-    render_path_thread_query_markdown, render_subagent_view_markdown, render_thread_head_markdown,
-    render_thread_markdown, render_thread_query_head_markdown, render_thread_query_markdown,
-    resolve_subagent_view, resolve_thread, write_thread,
+    maintain_search_index_for_uri, query_threads, query_threads_by_path,
+    render_path_thread_query_head_markdown, render_path_thread_query_markdown,
+    render_subagent_view_markdown, render_thread_head_markdown, render_thread_markdown,
+    render_thread_query_head_markdown, render_thread_query_markdown, resolve_subagent_view,
+    resolve_thread, write_thread,
 };
 pub use uri::AgentsUri;

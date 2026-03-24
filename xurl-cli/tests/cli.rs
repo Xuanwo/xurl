@@ -90,6 +90,22 @@ fn setup_codex_tree_with_scope(scope: &Path) -> tempfile::TempDir {
     temp
 }
 
+fn codex_thread_path(root: &Path) -> PathBuf {
+    root.join(format!(
+        "sessions/2026/02/23/rollout-2026-02-23T04-48-50-{SESSION_ID}.jsonl"
+    ))
+}
+
+fn read_index_search_text(index_path: &Path, provider: &str, thread_id: &str) -> String {
+    let conn = Connection::open(index_path).expect("open index");
+    conn.query_row(
+        "SELECT search_text FROM thread_fts WHERE provider = ?1 AND thread_id = ?2 LIMIT 1",
+        params![provider, thread_id],
+        |row| row.get::<_, String>(0),
+    )
+    .expect("search text row")
+}
+
 fn setup_codex_tree_with_sqlite_missing_threads() -> tempfile::TempDir {
     let temp = setup_codex_tree();
     fs::write(temp.path().join("state.sqlite"), "").expect("write sqlite");
@@ -878,6 +894,88 @@ fn codex_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains("type = session_meta"))
         .stdout(predicate::str::contains("payload.cwd = /tmp/project"))
         .stdout(predicate::str::contains("payload.git.branch = main"));
+}
+
+#[test]
+fn codex_collection_query_creates_search_index_file() {
+    let temp = setup_codex_tree_with_metadata();
+    let index_home = tempdir().expect("tempdir");
+    let index_path = index_home.path().join("search-index.sqlite3");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("XURL_SEARCH_INDEX_PATH", &index_path)
+        .arg("-X")
+        .arg("index")
+        .arg("agents://codex")
+        .assert()
+        .success();
+
+    assert!(index_path.exists(), "search index file should be created");
+    assert!(read_index_search_text(&index_path, "codex", SESSION_ID).contains("hello"));
+}
+
+#[test]
+fn codex_collection_query_can_disable_search_index() {
+    let temp = setup_codex_tree_with_metadata();
+    let index_home = tempdir().expect("tempdir");
+    let index_path = index_home.path().join("search-index.sqlite3");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("XURL_SEARCH_INDEX_PATH", &index_path)
+        .env("XURL_DISABLE_SEARCH_INDEX", "1")
+        .arg("-X")
+        .arg("index")
+        .arg("agents://codex")
+        .assert()
+        .success();
+
+    assert!(
+        !index_path.exists(),
+        "search index file should not be created when disabled"
+    );
+}
+
+#[test]
+fn codex_collection_query_refreshes_stale_index_after_file_change() {
+    let temp = setup_codex_tree_with_metadata();
+    let index_home = tempdir().expect("tempdir");
+    let index_path = index_home.path().join("search-index.sqlite3");
+
+    let mut warm = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    warm.env("CODEX_HOME", temp.path())
+        .env("XURL_SEARCH_INDEX_PATH", &index_path)
+        .arg("-X")
+        .arg("index")
+        .arg("agents://codex")
+        .assert()
+        .success();
+
+    let thread_path = codex_thread_path(temp.path());
+    fs::write(
+        &thread_path,
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/project\",\"git\":{\"branch\":\"main\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"goodbye\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"planet\"}]}}\n"
+        ),
+    )
+    .expect("rewrite");
+
+    let mut rebuild = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    rebuild
+        .env("CODEX_HOME", temp.path())
+        .env("XURL_SEARCH_INDEX_PATH", &index_path)
+        .arg("-X")
+        .arg("index")
+        .arg("agents://codex")
+        .assert()
+        .success();
+
+    let search_text = read_index_search_text(&index_path, "codex", SESSION_ID);
+    assert!(search_text.contains("goodbye"));
+    assert!(!search_text.contains("hello"));
 }
 
 #[test]

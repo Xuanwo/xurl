@@ -101,6 +101,8 @@ xurl agents://codex/reviewer
 
 Query results include reduced thread metadata when available, so you can inspect fields like `payload.git.branch` without opening each thread individually.
 
+Repeated queries reuse a local on-demand search index. `xurl` refreshes it during normal reads, writes, and queries, so no background process is required. Set `XURL_DISABLE_SEARCH_INDEX=1` to force direct scanning.
+
 ### Discover
 
 ```bash

@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -26,6 +26,13 @@ pub struct CodexProvider {
 struct SqliteThreadRecord {
     rollout_path: PathBuf,
     archived: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CodexStateThreadRecord {
+    pub(crate) session_id: String,
+    pub(crate) rollout_path: PathBuf,
+    pub(crate) archived: bool,
 }
 
 impl CodexProvider {
@@ -98,6 +105,21 @@ impl CodexProvider {
         Ok(row)
     }
 
+    fn query_all_thread_records(
+        db_path: &Path,
+    ) -> std::result::Result<Vec<CodexStateThreadRecord>, rusqlite::Error> {
+        let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let mut stmt = conn.prepare("SELECT id, rollout_path, archived FROM threads")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(CodexStateThreadRecord {
+                session_id: row.get::<_, String>(0)?,
+                rollout_path: PathBuf::from(row.get::<_, String>(1)?),
+                archived: row.get::<_, i64>(2)? != 0,
+            })
+        })?;
+        rows.collect()
+    }
+
     fn lookup_thread_from_state_db(
         state_dbs: &[PathBuf],
         session_id: &str,
@@ -115,6 +137,68 @@ impl CodexProvider {
         }
 
         None
+    }
+
+    pub(crate) fn collect_state_thread_records(
+        &self,
+        warnings: &mut Vec<String>,
+    ) -> Vec<CodexStateThreadRecord> {
+        let mut seen = HashSet::new();
+        let mut records = Vec::new();
+        for db_path in self.state_db_paths() {
+            match Self::query_all_thread_records(&db_path) {
+                Ok(items) => {
+                    for record in items {
+                        if !seen.insert(record.session_id.clone()) {
+                            continue;
+                        }
+                        records.push(record);
+                    }
+                }
+                Err(err) => warnings.push(format!(
+                    "failed reading sqlite thread index {}: {err}",
+                    db_path.display()
+                )),
+            }
+        }
+        records
+    }
+
+    pub(crate) fn state_manifest_watermark(&self, warnings: &mut Vec<String>) -> Option<String> {
+        let paths = self.state_db_paths();
+        if paths.is_empty() {
+            return None;
+        }
+
+        let mut parts = Vec::with_capacity(paths.len());
+        for path in paths {
+            match fs::metadata(&path) {
+                Ok(metadata) => {
+                    let modified_ns = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|value| value.duration_since(SystemTime::UNIX_EPOCH).ok())
+                        .map(|value| value.as_nanos())
+                        .unwrap_or(0);
+                    parts.push(format!(
+                        "{}:{}:{}",
+                        path.display(),
+                        metadata.len(),
+                        modified_ns
+                    ));
+                }
+                Err(err) => warnings.push(format!(
+                    "failed reading codex state db metadata {}: {err}",
+                    path.display()
+                )),
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("|"))
+        }
     }
 
     fn find_candidates(root: &Path, session_id: &str) -> Vec<PathBuf> {
