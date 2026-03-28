@@ -13,13 +13,15 @@ pub mod uri;
 
 pub use error::{Result, XurlError};
 pub use model::{
-    MessageRole, PiEntryListView, ProviderKind, ResolutionMeta, ResolvedThread, SubagentDetailView,
-    SubagentListView, SubagentView, ThreadMessage, ThreadQuery, ThreadQueryItem, ThreadQueryResult,
-    WriteOptions, WriteRequest, WriteResult,
+    MessageRole, PathThreadQuery, PathThreadQueryResult, PiEntryListView, ProviderKind,
+    ResolutionMeta, ResolvedThread, SubagentDetailView, SubagentListView, SubagentView,
+    ThreadMessage, ThreadQuery, ThreadQueryItem, ThreadQueryResult, WriteOptions, WriteRequest,
+    WriteResult,
 };
 pub use provider::{ProviderRoots, WriteEventSink};
 pub use service::{
-    query_threads, render_subagent_view_markdown, render_thread_head_markdown,
+    query_threads, query_threads_by_path, render_path_thread_query_head_markdown,
+    render_path_thread_query_markdown, render_subagent_view_markdown, render_thread_head_markdown,
     render_thread_markdown, render_thread_query_head_markdown, render_thread_query_markdown,
     resolve_subagent_view, resolve_thread, write_thread,
 };

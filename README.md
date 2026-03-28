@@ -1,78 +1,115 @@
 # xURL
 
-`xURL` is a client for AI agent URLs.
+`xURL` is a CLI that reads, queries, and writes AI agent conversations through a unified `agents://` URI scheme.
 
 > Also known as **Xuanwo's URL**.
 
 ## What xURL Can Do
 
-- Read an agent conversation as markdown.
-- Query recent threads and keyword matches for a provider.
-- Query role-scoped threads with `agents://<provider>/<role>`.
-- Discover subagent/branch navigation targets.
-- Start a new conversation with agents.
-- Continue an existing conversation with follow-up prompts.
+xURL gives you one URI scheme (`agents://`) to **read**, **query**, **discover**, and **write** conversations across multiple AI agent CLIs.
 
-## Quick Start
+- **Read** a conversation as markdown — `xurl agents://codex/<id>`
+- **Query** threads by provider, keyword, local path, or role — `xurl 'agents://codex?q=refactor'`
+- **Discover** child targets and metadata before drilling down — `xurl -I agents://codex/<id>`
+- **Write** to start or continue a conversation — `xurl agents://codex -d "hello"`
 
-1. Add `xurl` as an agent skill:
+## Providers
+
+<table>
+  <tr>
+    <td align="center"><img src="https://ampcode.com/amp-mark-color.svg" alt="Amp" width="36" height="36" /><br /><code>agents://amp</code></td>
+    <td align="center"><img src="https://cdn.simpleicons.org/claude" alt="Claude" width="36" height="36" /><br /><code>agents://claude</code></td>
+    <td align="center"><img src="https://avatars.githubusercontent.com/u/14957082?s=200&v=4" alt="Codex" width="36" height="36" /><br /><code>agents://codex</code></td>
+    <td align="center"><img src="https://cdn.simpleicons.org/githubcopilot" alt="GitHub Copilot" width="36" height="36" /><br /><code>agents://copilot</code></td>
+    <td align="center"><img src="https://www.cursor.com/favicon.ico" alt="Cursor" width="36" height="36" /><br /><code>agents://cursor</code></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="https://cdn.simpleicons.org/googlegemini" alt="Gemini" width="36" height="36" /><br /><code>agents://gemini</code></td>
+    <td align="center"><img src="https://avatars.githubusercontent.com/u/129152888?s=200&v=4" alt="Kimi" width="36" height="36" /><br /><code>agents://kimi</code></td>
+    <td align="center"><img src="https://avatars.githubusercontent.com/u/208539476?s=200&v=4" alt="OpenCode" width="36" height="36" /><br /><code>agents://opencode</code></td>
+    <td align="center"><img src="https://openclaw.ai/favicon.svg" alt="OpenClaw" width="36" height="36" /><br /><code>agents://openclaw</code></td>
+    <td align="center"><img src=".github/assets/pi-logo-dark.svg" alt="Pi" width="36" height="36" /><br /><code>agents://pi</code></td>
+  </tr>
+</table>
+
+## Installation
+
+Install as an agent skill:
 
 ```bash
 npx skills add Xuanwo/xurl
 ```
 
-2. Start your agent and ask the agent to summarize a thread:
+Or install the standalone CLI:
+
+```bash
+brew tap xuanwo/tap && brew install xurl   # Homebrew
+cargo install xurl-cli                      # Cargo
+uv tool install xuanwo-xurl                 # Python / uv
+npm install -g @xuanwo/xurl                 # npm
+```
+
+## Quick Start
+
+Ask your agent to summarize a thread:
 
 ```text
 Please summarize this thread: agents://codex/xxx_thread
 ```
 
-## Providers
-
-| Provider | Query | Create | Role Create |
-| --- | --- | --- | --- |
-| <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | Yes | No |
-| <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes | Yes |
-| <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes | Yes |
-| <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes | No |
-| <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes | No |
-| <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes | Yes |
-| <img src="https://openclaw.ai/favicon.svg" width="16" height="16" /> OpenClaw | Yes | Yes | Yes |
-
+<<
 ## Usage
 
-Read an agent conversation:
+> **Note:** The `agents://` scheme prefix is optional — `codex/...` is equivalent to `agents://codex/...`.
+
+### Read
 
 ```bash
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
-# equivalent shorthand:
-xurl codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+xurl agents://copilot/688628a1-407a-4b4e-b24a-1a250ebf864f
 ```
 
-Query provider threads:
+Save output to a file:
+
+```bash
+xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+### Query
+
+By provider:
 
 ```bash
 xurl agents://codex
 xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
-# equivalent shorthand:
-xurl codex
-xurl 'codex?q=spawn_agent'
+xurl 'agents://copilot?q=resume&limit=5'
 ```
 
-Query role-scoped threads:
+By local path:
+
+```bash
+xurl agents:///Users/alice/work/xurl
+xurl 'agents:///Users/alice/work/xurl?q=refactor&limit=5'
+xurl 'agents://.?q=refactor&providers=codex,claude'
+xurl 'agents://~/work/xurl?providers=opencode'
+```
+
+By role:
 
 ```bash
 xurl agents://codex/reviewer
-# equivalent shorthand:
-xurl codex/reviewer
 ```
 
-Discover child targets:
+Query results include reduced thread metadata when available, so you can inspect fields like `payload.git.branch` without opening each thread individually.
+
+### Discover
 
 ```bash
 xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 ```
+
+Frontmatter includes provider metadata flattened into readable key-value lines (e.g. `payload.git.branch = ...`), and skips oversized instruction-like fields.
 
 Drill down into a discovered child target:
 
@@ -80,18 +117,19 @@ Drill down into a discovered child target:
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
 ```
 
-Start a new agent conversation:
+### Write
+
+Start a new conversation:
 
 ```bash
 xurl agents://codex -d "Draft a migration plan"
-# equivalent shorthand:
-xurl codex -d "Draft a migration plan"
 ```
 
-Start a new conversation with role URI:
+Start with a role URI:
 
 ```bash
 xurl agents://codex/reviewer -d "Review this patch"
+xurl agents://copilot/research -d "Investigate the failing integration test"
 ```
 
 Continue an existing conversation:
@@ -100,16 +138,10 @@ Continue an existing conversation:
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592 -d "Continue"
 ```
 
-Create with query parameters:
+Pass extra parameters to the provider CLI via query string:
 
 ```bash
 xurl "agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
-```
-
-Save output:
-
-```bash
-xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 ```
 
 ## Command Reference
@@ -118,12 +150,20 @@ xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl [OPTIONS] <URI>
 ```
 
-- `-I, --head`: output frontmatter/discovery info only.
+- `-I, --head`: output frontmatter/discovery info only, including the first provider metadata record flattened into key-value lines when available.
 - `-d, --data <DATA>`: write payload (repeatable).
   - text: `-d "hello"`
   - file: `-d @prompt.txt`
   - stdin: `-d @-`
 - `-o, --output <PATH>`: write command output to file.
+
+## Error Output
+
+`xurl` writes actionable stderr errors for agents:
+
+- unsupported providers and unsupported capabilities include `requested_uri`, suggested `next_steps`, and the GitHub issue link for requesting support
+- missing local data includes evidence such as `searched_roots` so the next recovery step is explicit
+- provider CLI failures include the command, exit code, and concrete retry guidance
 
 ## URI Reference
 
@@ -137,15 +177,34 @@ xurl [OPTIONS] <URI>
 ```
 
 - `scheme`: optional `agents://` prefix. If omitted, `xurl` treats input as an `agents` URI shorthand.
-- `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`, `openclaw`.
+- `provider`: target provider name, such as `amp`, `claude`, `codex`, `copilot`, `cursor`, `gemini`, `kimi`, `opencode`, `openclaw`, `pi`.
 - `token`: main conversation identifier or role name.
 - `child_id`: child/subagent identifier under a main conversation.
 - `query`: optional key-value parameters, interpreted by context.
+
+### Path-Scoped Query URI
+
+```text
+agents:///abs/path[?<query>]
+agents://.[?<query>]
+agents://./subdir[?<query>]
+agents://..[?<query>]
+agents://../repo[?<query>]
+agents://~[?<query>]
+agents://~/repo[?<query>]
+```
+
+- `agents:///abs/path`: canonical local path query form.
+- `agents://.` / `agents://./subdir`: query relative to the current working directory.
+- `agents://..` / `agents://../repo`: query relative to the parent of the current working directory.
+- `agents://~` / `agents://~/repo`: query relative to the home directory.
+- path-scoped query always returns a conversation list.
 
 ### Agents Query
 
 - `q=<keyword>`: filters discovery results by keyword. Use when you want to find conversations by topic.
 - `limit=<n>`: limits discovery result count (default `10`). Use when you need a shorter or longer result list.
+- `providers=<name[,name...]>`: restricts a path-scoped query to selected providers.
 - `<key>=<value>`: in write mode (`-d`), `xurl` forwards as `--<key> <value>` to the provider CLI.
 - `<flag>`: in write mode (`-d`), `xurl` forwards as `--<flag>` to the provider CLI.
 
@@ -153,7 +212,9 @@ Examples:
 
 ```text
 agents://codex?q=spawn_agent&limit=10
-agents://codex/threads/<conversation_id>
+agents:///Users/alice/work/xurl?q=refactor&providers=codex,claude
+agents://.?q=refactor&providers=codex
+agents://codex/<conversation_id>
 agents://codex/reviewer
 agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared
 ```

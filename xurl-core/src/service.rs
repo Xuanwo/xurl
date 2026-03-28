@@ -15,15 +15,19 @@ use walkdir::WalkDir;
 use crate::error::{Result, XurlError};
 use crate::jsonl;
 use crate::model::{
-    MessageRole, PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedThread,
-    SubagentDetailView, SubagentExcerptMessage, SubagentLifecycleEvent, SubagentListItem,
-    SubagentListView, SubagentQuery, SubagentRelation, SubagentThreadRef, SubagentView,
-    ThreadQuery, ThreadQueryItem, ThreadQueryResult, WriteRequest, WriteResult,
+    MessageRole, PathThreadQuery, PathThreadQueryResult, PiEntryListItem, PiEntryListView,
+    PiEntryQuery, ProviderKind, ResolvedThread, SubagentDetailView, SubagentExcerptMessage,
+    SubagentLifecycleEvent, SubagentListItem, SubagentListView, SubagentQuery, SubagentRelation,
+    SubagentThreadRef, SubagentView, ThreadQuery, ThreadQueryItem, ThreadQueryResult, WriteRequest,
+    WriteResult,
 };
 use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
 use crate::provider::codex::CodexProvider;
+use crate::provider::copilot::CopilotProvider;
+use crate::provider::cursor::CursorProvider;
 use crate::provider::gemini::GeminiProvider;
+use crate::provider::kimi::KimiProvider;
 use crate::provider::openclaw::OpenClawProvider;
 use crate::provider::opencode::OpencodeProvider;
 use crate::provider::pi::PiProvider;
@@ -37,6 +41,7 @@ const STATUS_COMPLETED: &str = "completed";
 const STATUS_ERRORED: &str = "errored";
 const STATUS_SHUTDOWN: &str = "shutdown";
 const STATUS_NOT_FOUND: &str = "notFound";
+const QUERY_METADATA_LINE_BUDGET: usize = 64;
 
 #[derive(Debug, Default, Clone)]
 struct AgentTimeline {
@@ -177,9 +182,12 @@ pub fn resolve_thread(uri: &AgentsUri, roots: &ProviderRoots) -> Result<Resolved
     let session_id = uri.require_session_id()?;
     match uri.provider {
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(session_id),
+        ProviderKind::Copilot => CopilotProvider::new(&roots.copilot_root).resolve(session_id),
         ProviderKind::Codex => CodexProvider::new(&roots.codex_root).resolve(session_id),
         ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).resolve(session_id),
+        ProviderKind::Cursor => CursorProvider::new(&roots.cursor_root).resolve(session_id),
         ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).resolve(session_id),
+        ProviderKind::Kimi => KimiProvider::new(&roots.kimi_root).resolve(session_id),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).resolve(session_id),
         ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).resolve(session_id),
         ProviderKind::Openclaw => OpenClawProvider::new(&roots.openclaw_root).resolve(session_id),
@@ -194,9 +202,12 @@ pub fn write_thread(
 ) -> Result<WriteResult> {
     match provider {
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).write(req, sink),
+        ProviderKind::Copilot => CopilotProvider::new(&roots.copilot_root).write(req, sink),
         ProviderKind::Codex => CodexProvider::new(&roots.codex_root).write(req, sink),
         ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).write(req, sink),
+        ProviderKind::Cursor => CursorProvider::new(&roots.cursor_root).write(req, sink),
         ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).write(req, sink),
+        ProviderKind::Kimi => Err(XurlError::UnsupportedProviderWrite("kimi".to_string())),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).write(req, sink),
         ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).write(req, sink),
         ProviderKind::Openclaw => OpenClawProvider::new(&roots.openclaw_root).write(req, sink),
@@ -211,11 +222,13 @@ enum QuerySearchTarget {
 
 #[derive(Debug, Clone)]
 struct QueryCandidate {
+    provider: ProviderKind,
     thread_id: String,
     uri: String,
     thread_source: String,
     updated_at: Option<String>,
     updated_epoch: Option<u64>,
+    scope_path: Option<PathBuf>,
     search_target: QuerySearchTarget,
 }
 
@@ -228,9 +241,20 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
 
     let mut candidates = match query.provider {
         ProviderKind::Amp => collect_amp_query_candidates(roots, &mut warnings),
+        ProviderKind::Copilot => collect_copilot_query_candidates(roots, &mut warnings),
         ProviderKind::Codex => collect_codex_query_candidates(roots, &mut warnings),
         ProviderKind::Claude => collect_claude_query_candidates(roots, &mut warnings),
+        ProviderKind::Cursor => collect_cursor_query_candidates(
+            roots,
+            &mut warnings,
+            query.q.as_deref().is_some_and(|q| !q.trim().is_empty())
+                || query
+                    .role
+                    .as_deref()
+                    .is_some_and(|role| !role.trim().is_empty()),
+        )?,
         ProviderKind::Gemini => collect_gemini_query_candidates(roots, &mut warnings),
+        ProviderKind::Kimi => collect_kimi_query_candidates(roots, &mut warnings),
         ProviderKind::Pi => collect_pi_query_candidates(roots, &mut warnings),
         ProviderKind::Opencode => collect_opencode_query_candidates(
             roots,
@@ -293,15 +317,100 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
         };
 
         items.push(ThreadQueryItem {
+            provider: candidate.provider,
             thread_id: candidate.thread_id.clone(),
             uri: candidate.uri.clone(),
             thread_source: candidate.thread_source.clone(),
             updated_at: candidate.updated_at.clone(),
             matched_preview,
+            thread_metadata: match &candidate.search_target {
+                QuerySearchTarget::File(path) => {
+                    collect_query_thread_metadata(query.provider, path)
+                }
+                QuerySearchTarget::Text(_) => None,
+            },
         });
     }
 
     Ok(ThreadQueryResult {
+        query: query.clone(),
+        items,
+        warnings,
+    })
+}
+
+pub fn query_threads_by_path(
+    query: &PathThreadQuery,
+    roots: &ProviderRoots,
+) -> Result<PathThreadQueryResult> {
+    let mut warnings = query
+        .ignored_params
+        .iter()
+        .map(|key| format!("ignored query parameter: {key}"))
+        .collect::<Vec<_>>();
+
+    let providers = query.providers.clone().unwrap_or_else(all_provider_kinds);
+    let keyword_filter = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    let requested_path = PathBuf::from(&query.scope_path);
+    let mut candidates = Vec::new();
+    for provider in providers.iter().copied() {
+        candidates.extend(collect_candidates_for_provider(
+            provider,
+            roots,
+            &mut warnings,
+            keyword_filter.is_some(),
+        )?);
+    }
+
+    candidates.retain(|candidate| {
+        candidate
+            .scope_path
+            .as_deref()
+            .is_some_and(|scope_path| path_matches_scope(scope_path, &requested_path))
+    });
+    candidates.sort_by_key(|candidate| Reverse(candidate.updated_epoch.unwrap_or(0)));
+
+    if query.limit == 0 {
+        return Ok(PathThreadQueryResult {
+            query: query.clone(),
+            items: Vec::new(),
+            warnings,
+        });
+    }
+
+    let mut items = Vec::new();
+    for candidate in &candidates {
+        if items.len() >= query.limit {
+            break;
+        }
+
+        let matched_preview = if let Some(keyword_filter) = keyword_filter {
+            let matched_preview = match_candidate_preview(candidate, keyword_filter)?;
+            if matched_preview.is_none() {
+                continue;
+            }
+            matched_preview
+        } else {
+            None
+        };
+
+        items.push(ThreadQueryItem {
+            provider: candidate.provider,
+            thread_id: candidate.thread_id.clone(),
+            uri: candidate.uri.clone(),
+            thread_source: candidate.thread_source.clone(),
+            updated_at: candidate.updated_at.clone(),
+            matched_preview,
+            thread_metadata: match &candidate.search_target {
+                QuerySearchTarget::File(path) => {
+                    collect_query_thread_metadata(candidate.provider, path)
+                }
+                QuerySearchTarget::Text(_) => None,
+            },
+        });
+    }
+
+    Ok(PathThreadQueryResult {
         query: query.clone(),
         items,
         warnings,
@@ -328,6 +437,7 @@ pub fn render_thread_query_head_markdown(result: &ThreadQueryResult) -> String {
         output.push_str("  []\n");
     } else {
         for item in &result.items {
+            push_yaml_string_with_indent(&mut output, 2, "provider", &item.provider.to_string());
             push_yaml_string_with_indent(&mut output, 2, "thread_id", &item.thread_id);
             push_yaml_string_with_indent(&mut output, 2, "uri", &item.uri);
             push_yaml_string_with_indent(&mut output, 2, "thread_source", &item.thread_source);
@@ -336,6 +446,9 @@ pub fn render_thread_query_head_markdown(result: &ThreadQueryResult) -> String {
             }
             if let Some(matched_preview) = &item.matched_preview {
                 push_yaml_string_with_indent(&mut output, 2, "matched_preview", matched_preview);
+            }
+            if let Some(thread_metadata) = &item.thread_metadata {
+                render_thread_metadata_with_indent(&mut output, 2, thread_metadata);
             }
         }
     }
@@ -370,6 +483,84 @@ pub fn render_thread_query_markdown(result: &ThreadQueryResult) -> String {
 
     for (index, item) in result.items.iter().enumerate() {
         output.push_str(&format!("## {}. `{}`\n\n", index + 1, item.uri));
+        output.push_str(&format!("- Provider: `{}`\n", item.provider));
+        output.push_str(&format!("- Thread ID: `{}`\n", item.thread_id));
+        output.push_str(&format!("- Thread Source: `{}`\n", item.thread_source));
+        if let Some(updated_at) = &item.updated_at {
+            output.push_str(&format!("- Updated At: `{}`\n", updated_at));
+        }
+        if let Some(matched_preview) = &item.matched_preview {
+            output.push_str(&format!("- Match: `{}`\n", matched_preview));
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+pub fn render_path_thread_query_head_markdown(result: &PathThreadQueryResult) -> String {
+    let mut output = String::new();
+    output.push_str("---\n");
+    push_yaml_string(&mut output, "uri", &result.query.uri);
+    push_yaml_string(&mut output, "scope_path", &result.query.scope_path);
+    push_yaml_string(&mut output, "mode", "path_thread_query");
+    push_yaml_string(&mut output, "limit", &result.query.limit.to_string());
+    if let Some(q) = &result.query.q {
+        push_yaml_string(&mut output, "q", q);
+    }
+    render_provider_filter(&mut output, result.query.providers.as_deref());
+
+    output.push_str("threads:\n");
+    if result.items.is_empty() {
+        output.push_str("  []\n");
+    } else {
+        for item in &result.items {
+            push_yaml_string_with_indent(&mut output, 2, "provider", &item.provider.to_string());
+            push_yaml_string_with_indent(&mut output, 2, "thread_id", &item.thread_id);
+            push_yaml_string_with_indent(&mut output, 2, "uri", &item.uri);
+            push_yaml_string_with_indent(&mut output, 2, "thread_source", &item.thread_source);
+            if let Some(updated_at) = &item.updated_at {
+                push_yaml_string_with_indent(&mut output, 2, "updated_at", updated_at);
+            }
+            if let Some(matched_preview) = &item.matched_preview {
+                push_yaml_string_with_indent(&mut output, 2, "matched_preview", matched_preview);
+            }
+            if let Some(thread_metadata) = &item.thread_metadata {
+                render_thread_metadata_with_indent(&mut output, 2, thread_metadata);
+            }
+        }
+    }
+
+    render_warnings(&mut output, &result.warnings);
+    output.push_str("---\n");
+    output
+}
+
+pub fn render_path_thread_query_markdown(result: &PathThreadQueryResult) -> String {
+    let mut output = render_path_thread_query_head_markdown(result);
+    output.push('\n');
+    output.push_str("# Threads\n\n");
+    output.push_str(&format!("- Scope Path: `{}`\n", result.query.scope_path));
+    output.push_str(&format!(
+        "- Providers: `{}`\n",
+        format_provider_filter(result.query.providers.as_deref())
+    ));
+    output.push_str(&format!("- Limit: `{}`\n", result.query.limit));
+    if let Some(q) = &result.query.q {
+        output.push_str(&format!("- Query: `{}`\n", q));
+    } else {
+        output.push_str("- Query: `_none_`\n");
+    }
+    output.push_str(&format!("- Matched: `{}`\n\n", result.items.len()));
+
+    if result.items.is_empty() {
+        output.push_str("_No threads found._\n");
+        return output;
+    }
+
+    for (index, item) in result.items.iter().enumerate() {
+        output.push_str(&format!("## {}. `{}`\n\n", index + 1, item.uri));
+        output.push_str(&format!("- Provider: `{}`\n", item.provider));
         output.push_str(&format!("- Thread ID: `{}`\n", item.thread_id));
         output.push_str(&format!("- Thread Source: `{}`\n", item.thread_source));
         if let Some(updated_at) = &item.updated_at {
@@ -486,16 +677,35 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                 "thread_source",
                 &resolved_main.path.display().to_string(),
             );
+            let (thread_metadata, metadata_warnings) =
+                collect_thread_metadata(uri.provider, &resolved_main.path);
+            render_thread_metadata(&mut output, &thread_metadata);
             push_yaml_string(&mut output, "mode", "subagent_index");
 
             let view = resolve_subagent_view(uri, roots, true)?;
             let mut warnings = resolved_main.metadata.warnings.clone();
+            warnings.extend(metadata_warnings);
 
             if let SubagentView::List(list) = view {
                 render_subagents_head(&mut output, &list);
                 warnings.extend(list.warnings);
             }
 
+            render_warnings(&mut output, &warnings);
+        }
+        (ProviderKind::Copilot | ProviderKind::Cursor | ProviderKind::Kimi, None) => {
+            let resolved = resolve_thread(uri, roots)?;
+            push_yaml_string(
+                &mut output,
+                "thread_source",
+                &resolved.path.display().to_string(),
+            );
+            let (thread_metadata, metadata_warnings) =
+                collect_thread_metadata(uri.provider, &resolved.path);
+            render_thread_metadata(&mut output, &thread_metadata);
+            push_yaml_string(&mut output, "mode", "thread");
+            let mut warnings = resolved.metadata.warnings.clone();
+            warnings.extend(metadata_warnings);
             render_warnings(&mut output, &warnings);
         }
         (ProviderKind::Pi, None) => {
@@ -505,11 +715,16 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                 "thread_source",
                 &resolved.path.display().to_string(),
             );
+            let (thread_metadata, metadata_warnings) =
+                collect_thread_metadata(uri.provider, &resolved.path);
+            render_thread_metadata(&mut output, &thread_metadata);
             push_yaml_string(&mut output, "mode", "pi_entry_index");
 
             let list = resolve_pi_entry_list_view(uri, roots)?;
             render_pi_entries_head(&mut output, &list);
-            let mut warnings = list.warnings;
+            let mut warnings = resolved.metadata.warnings.clone();
+            warnings.extend(metadata_warnings);
+            warnings.extend(list.warnings);
 
             if let SubagentView::List(subagents) = resolve_subagent_view(uri, roots, true)? {
                 render_subagents_head(&mut output, &subagents);
@@ -520,9 +735,12 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
         }
         (
             ProviderKind::Amp
+            | ProviderKind::Copilot
             | ProviderKind::Codex
             | ProviderKind::Claude
+            | ProviderKind::Cursor
             | ProviderKind::Gemini
+            | ProviderKind::Kimi
             | ProviderKind::Openclaw
             | ProviderKind::Opencode,
             Some(_),
@@ -538,7 +756,10 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                     .and_then(|thread| thread.path.as_deref())
                     .map(ToString::to_string)
                     .unwrap_or_else(|| resolved_main.path.display().to_string());
+                let (thread_metadata, metadata_warnings) =
+                    collect_thread_metadata(uri.provider, Path::new(&thread_source));
                 push_yaml_string(&mut output, "thread_source", &thread_source);
+                render_thread_metadata(&mut output, &thread_metadata);
                 push_yaml_string(&mut output, "mode", "subagent_detail");
 
                 if let Some(agent_id) = &detail.query.agent_id {
@@ -566,7 +787,9 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                     }
                 }
 
-                render_warnings(&mut output, &detail.warnings);
+                let mut warnings = detail.warnings.clone();
+                warnings.extend(metadata_warnings);
+                render_warnings(&mut output, &warnings);
             }
         }
         (ProviderKind::Pi, Some(agent_id)) if is_uuid_session_id(agent_id) => {
@@ -581,7 +804,10 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                     .and_then(|thread| thread.path.as_deref())
                     .map(ToString::to_string)
                     .unwrap_or_else(|| resolved_main.path.display().to_string());
+                let (thread_metadata, metadata_warnings) =
+                    collect_thread_metadata(uri.provider, Path::new(&thread_source));
                 push_yaml_string(&mut output, "thread_source", &thread_source);
+                render_thread_metadata(&mut output, &thread_metadata);
                 push_yaml_string(&mut output, "mode", "subagent_detail");
                 push_yaml_string(&mut output, "agent_id", agent_id);
                 push_yaml_string(
@@ -602,18 +828,26 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
                     }
                 }
 
-                render_warnings(&mut output, &detail.warnings);
+                let mut warnings = detail.warnings.clone();
+                warnings.extend(metadata_warnings);
+                render_warnings(&mut output, &warnings);
             }
         }
         (ProviderKind::Pi, Some(entry_id)) => {
             let resolved = resolve_thread(uri, roots)?;
+            let (thread_metadata, metadata_warnings) =
+                collect_thread_metadata(uri.provider, &resolved.path);
             push_yaml_string(
                 &mut output,
                 "thread_source",
                 &resolved.path.display().to_string(),
             );
+            render_thread_metadata(&mut output, &thread_metadata);
             push_yaml_string(&mut output, "mode", "pi_entry");
             push_yaml_string(&mut output, "entry_id", entry_id);
+            let mut warnings = resolved.metadata.warnings.clone();
+            warnings.extend(metadata_warnings);
+            render_warnings(&mut output, &warnings);
         }
     }
 
@@ -641,9 +875,23 @@ pub fn resolve_subagent_view(
 
     match uri.provider {
         ProviderKind::Amp => resolve_amp_subagent_view(uri, roots, list),
+        ProviderKind::Copilot => Err(XurlError::UnsupportedSubagentProvider(
+            ProviderKind::Copilot.to_string(),
+        )),
         ProviderKind::Codex => resolve_codex_subagent_view(uri, roots, list),
         ProviderKind::Claude => resolve_claude_subagent_view(uri, roots, list),
+        ProviderKind::Cursor => Err(XurlError::UnsupportedSubagentProvider("cursor".to_string())),
         ProviderKind::Gemini => resolve_gemini_subagent_view(uri, roots, list),
+        ProviderKind::Kimi => Ok(SubagentView::List(SubagentListView {
+            query: SubagentQuery {
+                provider: "kimi".to_string(),
+                main_thread_id: uri.session_id.clone(),
+                agent_id: uri.agent_id.clone(),
+                list,
+            },
+            agents: Vec::new(),
+            warnings: Vec::new(),
+        })),
         ProviderKind::Pi => resolve_pi_subagent_view(uri, roots, list),
         ProviderKind::Opencode => resolve_opencode_subagent_view(uri, roots, list),
         ProviderKind::Openclaw => resolve_openclaw_subagent_view(uri, roots, list),
@@ -652,6 +900,33 @@ pub fn resolve_subagent_view(
 
 fn push_yaml_string(output: &mut String, key: &str, value: &str) {
     output.push_str(&format!("{key}: '{}'\n", yaml_single_quoted(value)));
+}
+
+fn render_provider_filter(output: &mut String, providers: Option<&[ProviderKind]>) {
+    output.push_str("providers:\n");
+    if let Some(providers) = providers {
+        for provider in providers {
+            output.push_str(&format!(
+                "  - '{}'\n",
+                yaml_single_quoted(&provider.to_string())
+            ));
+        }
+    } else {
+        output.push_str("  - 'all'\n");
+    }
+}
+
+fn format_provider_filter(providers: Option<&[ProviderKind]>) -> String {
+    providers.map_or_else(
+        || "all".to_string(),
+        |providers| {
+            providers
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
+    )
 }
 
 fn yaml_single_quoted(value: &str) -> String {
@@ -669,6 +944,710 @@ fn render_warnings(output: &mut String, warnings: &[String]) {
     output.push_str("warnings:\n");
     for warning in unique {
         output.push_str(&format!("  - '{}'\n", yaml_single_quoted(&warning)));
+    }
+}
+
+fn render_thread_metadata(output: &mut String, metadata: &[String]) {
+    if metadata.is_empty() {
+        return;
+    }
+    render_thread_metadata_with_indent(output, 0, metadata);
+}
+
+fn render_thread_metadata_with_indent(output: &mut String, indent: usize, metadata: &[String]) {
+    if metadata.is_empty() {
+        return;
+    }
+
+    let prefix = " ".repeat(indent);
+    output.push_str(&format!("{prefix}thread_metadata:\n"));
+    for value in metadata {
+        output.push_str(&format!("{prefix}  - '{}'\n", yaml_single_quoted(value)));
+    }
+}
+
+fn collect_thread_metadata(provider: ProviderKind, path: &Path) -> (Vec<String>, Vec<String>) {
+    let raw = match read_thread_raw(path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            return (
+                Vec::new(),
+                vec![format!(
+                    "failed reading thread metadata {}: {err}",
+                    path.display()
+                )],
+            );
+        }
+    };
+
+    match provider {
+        ProviderKind::Amp => collect_amp_thread_metadata(path, &raw),
+        ProviderKind::Copilot => collect_copilot_thread_metadata(path, &raw),
+        ProviderKind::Codex => collect_codex_thread_metadata(path, &raw),
+        ProviderKind::Claude => collect_claude_thread_metadata(path, &raw),
+        ProviderKind::Cursor => collect_cursor_thread_metadata(path, &raw),
+        ProviderKind::Gemini => collect_gemini_thread_metadata(path, &raw),
+        ProviderKind::Kimi => (Vec::new(), Vec::new()),
+        ProviderKind::Pi => collect_pi_thread_metadata(path, &raw),
+        ProviderKind::Opencode => collect_opencode_thread_metadata(path, &raw),
+    }
+}
+
+fn collect_query_thread_metadata(provider: ProviderKind, path: &Path) -> Option<Vec<String>> {
+    let metadata = match provider {
+        ProviderKind::Codex => {
+            collect_query_jsonl_thread_metadata(path, |value, metadata, seen| {
+                match value.get("type").and_then(Value::as_str) {
+                    Some("session_meta") | Some("turn_context") => {
+                        push_thread_metadata_record(metadata, seen, &value)
+                    }
+                    _ => false,
+                }
+            })
+        }
+        ProviderKind::Claude => {
+            collect_query_jsonl_thread_metadata(path, |value, metadata, seen| {
+                if looks_like_claude_metadata(&value) {
+                    let mut metadata_value = value;
+                    if let Some(object) = metadata_value.as_object_mut() {
+                        object.remove("message");
+                    }
+                    push_thread_metadata_record(metadata, seen, &metadata_value)
+                } else {
+                    false
+                }
+            })
+        }
+        ProviderKind::Cursor => {
+            collect_query_jsonl_thread_metadata(path, |value, metadata, seen| {
+                if value.get("type").and_then(Value::as_str) == Some("session")
+                    && let Some(session_metadata) = value.get("metadata")
+                {
+                    push_thread_metadata_record(metadata, seen, session_metadata)
+                } else {
+                    false
+                }
+            })
+        }
+        ProviderKind::Pi => collect_query_jsonl_thread_metadata(path, |value, metadata, seen| {
+            match value.get("type").and_then(Value::as_str) {
+                Some("session") | Some("model_change") | Some("thinking_level_change") => {
+                    push_thread_metadata_record(metadata, seen, &value)
+                }
+                _ => false,
+            }
+        }),
+        ProviderKind::Amp
+        | ProviderKind::Copilot
+        | ProviderKind::Gemini
+        | ProviderKind::Kimi
+        | ProviderKind::Opencode => collect_thread_metadata(provider, path).0,
+    };
+
+    if metadata.is_empty() {
+        None
+    } else {
+        Some(metadata)
+    }
+}
+
+fn collect_query_jsonl_thread_metadata<F>(path: &Path, mut on_value: F) -> Vec<String>
+where
+    F: FnMut(Value, &mut Vec<String>, &mut BTreeSet<String>) -> bool,
+{
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
+
+    let reader = BufReader::new(file);
+    let mut metadata = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for line in reader.lines().take(QUERY_METADATA_LINE_BUDGET) {
+        let Ok(line) = line else {
+            break;
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+
+        if on_value(value, &mut metadata, &mut seen) {
+            break;
+        }
+    }
+
+    metadata
+}
+
+fn collect_codex_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing codex metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        match value.get("type").and_then(Value::as_str) {
+            Some("session_meta") | Some("turn_context") => {
+                if push_thread_metadata_record(&mut metadata, &mut seen, &value) {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (metadata, warnings)
+}
+
+fn collect_claude_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing claude metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        if looks_like_claude_metadata(&value) {
+            let mut metadata_value = value;
+            if let Some(object) = metadata_value.as_object_mut() {
+                object.remove("message");
+            }
+            if push_thread_metadata_record(&mut metadata, &mut seen, &metadata_value) {
+                break;
+            }
+        }
+    }
+
+    (metadata, warnings)
+}
+
+fn collect_pi_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing pi metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        match value.get("type").and_then(Value::as_str) {
+            Some("session") | Some("model_change") | Some("thinking_level_change") => {
+                if push_thread_metadata_record(&mut metadata, &mut seen, &value) {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (metadata, warnings)
+}
+
+fn collect_amp_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    collect_json_object_thread_metadata(path, raw, ProviderKind::Amp, &["messages"])
+}
+
+fn collect_copilot_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing copilot metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        match value.get("type").and_then(Value::as_str) {
+            Some("session.start") | Some("session.resume") | Some("subagent.selected") => {
+                if push_thread_metadata_record(&mut metadata, &mut seen, &value) {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (metadata, warnings)
+}
+
+fn collect_gemini_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    collect_json_object_thread_metadata(path, raw, ProviderKind::Gemini, &["messages"])
+}
+
+fn collect_cursor_thread_metadata(path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for (line_idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing cursor metadata line {} in {}: {err}",
+                    line_idx + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        if value.get("type").and_then(Value::as_str) == Some("session")
+            && let Some(session_metadata) = value.get("metadata")
+        {
+            push_thread_metadata_record(&mut metadata, &mut seen, session_metadata);
+            break;
+        }
+    }
+
+    (metadata, warnings)
+}
+
+fn collect_opencode_thread_metadata(_path: &Path, raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    if let Some(first_non_empty) = raw.lines().find(|line| !line.trim().is_empty())
+        && let Ok(value) = serde_json::from_str::<Value>(first_non_empty)
+        && value.get("type").and_then(Value::as_str) == Some("session")
+    {
+        let _ = push_thread_metadata_record(&mut metadata, &mut seen, &value);
+    }
+
+    (metadata, Vec::new())
+}
+
+fn collect_json_object_thread_metadata(
+    path: &Path,
+    raw: &str,
+    provider: ProviderKind,
+    strip_keys: &[&str],
+) -> (Vec<String>, Vec<String>) {
+    let mut metadata = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+    let value = match serde_json::from_str::<Value>(raw) {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                metadata,
+                vec![format!(
+                    "failed parsing {provider} metadata payload {}: {err}",
+                    path.display()
+                )],
+            );
+        }
+    };
+
+    let mut metadata_value = value;
+    if let Some(object) = metadata_value.as_object_mut() {
+        for key in strip_keys {
+            object.remove(*key);
+        }
+    }
+
+    if !metadata_value.is_null() {
+        let should_emit = metadata_value
+            .as_object()
+            .is_none_or(|object| !object.is_empty());
+        if should_emit {
+            let _ = push_thread_metadata_record(&mut metadata, &mut seen, &metadata_value);
+        }
+    }
+
+    (metadata, Vec::new())
+}
+
+fn looks_like_claude_metadata(value: &Value) -> bool {
+    value.get("cwd").is_some()
+        || value.get("gitBranch").is_some()
+        || value.get("version").is_some()
+        || value.get("sessionId").is_some()
+        || value.get("agentId").is_some()
+        || value.get("isSidechain").is_some()
+}
+
+fn scope_path_from_str(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}
+
+fn extract_json_string_at_paths<'a>(value: &'a Value, paths: &[&[&str]]) -> Option<&'a str> {
+    for path in paths {
+        let mut current = value;
+        let mut found = true;
+        for key in *path {
+            let Some(next) = current.get(*key) else {
+                found = false;
+                break;
+            };
+            current = next;
+        }
+        if found && let Some(text) = current.as_str() {
+            return Some(text);
+        }
+    }
+
+    None
+}
+
+fn find_first_string_by_key<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    match value {
+        Value::Object(map) => {
+            if let Some(text) = map.get(key).and_then(Value::as_str) {
+                return Some(text);
+            }
+            for child in map.values() {
+                if let Some(text) = find_first_string_by_key(child, key) {
+                    return Some(text);
+                }
+            }
+            None
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| find_first_string_by_key(item, key)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    }
+}
+
+fn extract_json_scope_path(
+    path: &Path,
+    field_paths: &[&[&str]],
+    fallback_keys: &[&str],
+) -> Option<PathBuf> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(&raw).ok()?;
+    extract_json_string_at_paths(&value, field_paths)
+        .and_then(scope_path_from_str)
+        .or_else(|| {
+            fallback_keys
+                .iter()
+                .find_map(|key| find_first_string_by_key(&value, key))
+                .and_then(scope_path_from_str)
+        })
+}
+
+fn extract_codex_scope_path(path: &Path) -> Option<PathBuf> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    for line in reader.lines().take(QUERY_METADATA_LINE_BUDGET).flatten() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value = serde_json::from_str::<Value>(trimmed).ok()?;
+        match value.get("type").and_then(Value::as_str) {
+            Some("session_meta") | Some("turn_context") => {
+                if let Some(text) =
+                    extract_json_string_at_paths(&value, &[&["payload", "cwd"], &["cwd"]])
+                {
+                    return scope_path_from_str(text);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn extract_claude_scope_path(path: &Path) -> Option<PathBuf> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    for line in reader.lines().take(QUERY_METADATA_LINE_BUDGET).flatten() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value = serde_json::from_str::<Value>(trimmed).ok()?;
+        if looks_like_claude_metadata(&value)
+            && let Some(text) = extract_json_string_at_paths(
+                &value,
+                &[&["cwd"], &["projectPath"], &["originalPath"]],
+            )
+        {
+            return scope_path_from_str(text);
+        }
+    }
+    None
+}
+
+fn extract_pi_scope_path(path: &Path) -> Option<PathBuf> {
+    let file = fs::File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    reader.read_line(&mut line).ok()?;
+    let value = serde_json::from_str::<Value>(line.trim()).ok()?;
+    value
+        .get("cwd")
+        .and_then(Value::as_str)
+        .and_then(scope_path_from_str)
+}
+
+fn extract_amp_scope_path(path: &Path) -> Option<PathBuf> {
+    extract_json_scope_path(path, &[&["cwd"]], &["cwd"])
+}
+
+fn extract_copilot_scope_path(path: &Path) -> Option<PathBuf> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut latest = None::<PathBuf>;
+
+    for line in reader.lines().map_while(std::result::Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("session.start") | Some("session.resume") => {
+                if let Some(text) =
+                    extract_json_string_at_paths(&value, &[&["data", "context", "cwd"]])
+                {
+                    latest = scope_path_from_str(text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    latest
+}
+
+fn extract_gemini_scope_path(path: &Path) -> Option<PathBuf> {
+    if let Some(project_root_marker_path) = path
+        .ancestors()
+        .skip(1)
+        .map(|ancestor| ancestor.join(".project_root"))
+        .find(|candidate| candidate.exists())
+        && let Ok(contents) = fs::read_to_string(project_root_marker_path)
+        && let Some(scope_path) = scope_path_from_str(contents.trim())
+    {
+        return Some(scope_path);
+    }
+
+    extract_json_scope_path(path, &[&["projectRoot"], &["cwd"]], &["projectRoot", "cwd"])
+}
+
+fn push_thread_metadata_record(
+    metadata: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    value: &Value,
+) -> bool {
+    let before = metadata.len();
+    flatten_thread_metadata_value(metadata, seen, None, value);
+    metadata.len() > before
+}
+
+fn flatten_thread_metadata_value(
+    metadata: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    path: Option<&str>,
+    value: &Value,
+) {
+    if let Some(path) = path
+        && should_ignore_thread_metadata_path(path)
+    {
+        return;
+    }
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            let Some(path) = path else {
+                return;
+            };
+            let entry = format!("{path} = {}", format_thread_metadata_value(value));
+            if seen.insert(entry.clone()) {
+                metadata.push(entry);
+            }
+        }
+        Value::Array(items) => {
+            let Some(path) = path else {
+                return;
+            };
+            if items.is_empty() {
+                let entry = format!("{path} = []");
+                if seen.insert(entry.clone()) {
+                    metadata.push(entry);
+                }
+                return;
+            }
+
+            for (index, item) in items.iter().enumerate() {
+                let child_path = format!("{path}[{index}]");
+                flatten_thread_metadata_value(metadata, seen, Some(&child_path), item);
+            }
+        }
+        Value::Object(map) => {
+            if map.is_empty() {
+                if let Some(path) = path {
+                    let entry = format!("{path} = {{}}");
+                    if seen.insert(entry.clone()) {
+                        metadata.push(entry);
+                    }
+                }
+                return;
+            }
+
+            for (key, child) in map {
+                let child_path = match path {
+                    Some(path) => format!("{path}.{key}"),
+                    None => key.clone(),
+                };
+                flatten_thread_metadata_value(metadata, seen, Some(&child_path), child);
+            }
+        }
+    }
+}
+
+fn should_ignore_thread_metadata_path(path: &str) -> bool {
+    const IGNORED_PREFIXES: &[&str] = &[
+        "base_instructions",
+        "user_instructions",
+        "developer_instructions",
+        "payload.base_instructions",
+        "payload.user_instructions",
+        "payload.developer_instructions",
+    ];
+
+    IGNORED_PREFIXES.iter().any(|prefix| {
+        path == *prefix
+            || path.starts_with(&format!("{prefix}."))
+            || path.starts_with(&format!("{prefix}["))
+    })
+}
+fn format_thread_metadata_value(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => format_thread_metadata_string(text),
+        Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+    }
+}
+
+fn all_provider_kinds() -> Vec<ProviderKind> {
+    vec![
+        ProviderKind::Amp,
+        ProviderKind::Copilot,
+        ProviderKind::Codex,
+        ProviderKind::Claude,
+        ProviderKind::Cursor,
+        ProviderKind::Gemini,
+        ProviderKind::Kimi,
+        ProviderKind::Pi,
+        ProviderKind::Opencode,
+    ]
+}
+
+fn path_matches_scope(scope_path: &Path, requested_path: &Path) -> bool {
+    scope_path == requested_path || scope_path.starts_with(requested_path)
+}
+
+fn collect_candidates_for_provider(
+    provider: ProviderKind,
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+    with_search_text: bool,
+) -> Result<Vec<QueryCandidate>> {
+    match provider {
+        ProviderKind::Amp => Ok(collect_amp_query_candidates(roots, warnings)),
+        ProviderKind::Copilot => Ok(collect_copilot_query_candidates(roots, warnings)),
+        ProviderKind::Codex => Ok(collect_codex_query_candidates(roots, warnings)),
+        ProviderKind::Claude => Ok(collect_claude_query_candidates(roots, warnings)),
+        ProviderKind::Cursor => collect_cursor_query_candidates(roots, warnings, with_search_text),
+        ProviderKind::Gemini => Ok(collect_gemini_query_candidates(roots, warnings)),
+        ProviderKind::Kimi => Ok(collect_kimi_query_candidates(roots, warnings)),
+        ProviderKind::Pi => Ok(collect_pi_query_candidates(roots, warnings)),
+        ProviderKind::Opencode => {
+            collect_opencode_query_candidates(roots, warnings, with_search_text)
+        }
+    }
+}
+
+fn format_thread_metadata_string(text: &str) -> String {
+    if text.is_empty()
+        || text.contains('\n')
+        || text.starts_with(char::is_whitespace)
+        || text.ends_with(char::is_whitespace)
+    {
+        serde_json::to_string(text).unwrap_or_else(|_| text.to_string())
+    } else {
+        text.to_string()
     }
 }
 
@@ -4003,8 +4982,69 @@ fn collect_amp_query_candidates(
                 .and_then(|stem| stem.to_str())
                 .map(ToString::to_string)
         },
+        extract_amp_scope_path,
         warnings,
     )
+}
+
+fn collect_copilot_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate> {
+    let sessions_root = roots.copilot_root.join("session-state");
+    if !sessions_root.exists() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(&sessions_root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.into_path();
+        let thread_id = if path.file_name().and_then(|name| name.to_str()) == Some("events.jsonl") {
+            path.parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .map(ToString::to_string)
+        } else if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+        {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(ToString::to_string)
+        } else {
+            None
+        };
+
+        let Some(thread_id) = thread_id else {
+            continue;
+        };
+        if !is_uuid_session_id(&thread_id) {
+            warnings.push(format!(
+                "skipped copilot transcript with invalid thread id={thread_id}: {}",
+                path.display()
+            ));
+            continue;
+        }
+
+        let thread_id = thread_id.to_ascii_lowercase();
+        let scope_path = extract_copilot_scope_path(&path);
+        candidates.push(make_file_candidate(
+            ProviderKind::Copilot,
+            thread_id.clone(),
+            format!("agents://copilot/{thread_id}"),
+            path,
+            scope_path,
+        ));
+    }
+
+    candidates
 }
 
 fn collect_codex_query_candidates(
@@ -4021,6 +5061,7 @@ fn collect_codex_query_candidates(
                 .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
         },
         extract_codex_rollout_id,
+        extract_codex_scope_path,
         warnings,
     ));
     candidates.extend(collect_simple_file_candidates(
@@ -4032,6 +5073,7 @@ fn collect_codex_query_candidates(
                 .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
         },
         extract_codex_rollout_id,
+        extract_codex_scope_path,
         warnings,
     ));
     candidates
@@ -4063,7 +5105,14 @@ fn collect_claude_query_candidates(
         }
 
         if let Some((thread_id, uri)) = extract_claude_thread_identity(&path) {
-            candidates.push(make_file_candidate(thread_id, uri, path));
+            let scope_path = extract_claude_scope_path(&path);
+            candidates.push(make_file_candidate(
+                ProviderKind::Claude,
+                thread_id,
+                uri,
+                path,
+                scope_path,
+            ));
         } else {
             warnings.push(format!(
                 "skipped claude transcript with unknown thread identity: {}",
@@ -4073,6 +5122,90 @@ fn collect_claude_query_candidates(
     }
 
     candidates
+}
+
+fn collect_cursor_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+    with_search_text: bool,
+) -> Result<Vec<QueryCandidate>> {
+    let provider = CursorProvider::new(&roots.cursor_root);
+    let chats_root = roots.cursor_root.join("chats");
+    if !chats_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(&chats_root)
+        .min_depth(3)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let path = entry.into_path();
+        if path.file_name().and_then(|name| name.to_str()) != Some("store.db") {
+            continue;
+        }
+
+        let Some(session_id) = path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .map(str::to_ascii_lowercase)
+        else {
+            warnings.push(format!(
+                "skipped cursor store with invalid session directory: {}",
+                path.display()
+            ));
+            continue;
+        };
+
+        if AgentsUri::parse(&format!("cursor://{session_id}")).is_err() {
+            warnings.push(format!(
+                "skipped cursor store with invalid id={session_id} from {}",
+                path.display()
+            ));
+            continue;
+        }
+
+        let materialized = match provider.materialize_store(&path, &session_id) {
+            Ok(materialized) => materialized,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed materializing cursor store {}: {err}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        let search_target = if with_search_text {
+            QuerySearchTarget::Text(materialized.search_text)
+        } else {
+            QuerySearchTarget::File(materialized.path)
+        };
+
+        candidates.push(QueryCandidate {
+            provider: ProviderKind::Cursor,
+            thread_id: session_id.clone(),
+            uri: format!("agents://cursor/{session_id}"),
+            thread_source: path.display().to_string(),
+            updated_at: modified_timestamp_string(&path),
+            updated_epoch: file_modified_epoch(&path),
+            scope_path: materialized
+                .metadata
+                .workspace_path
+                .as_deref()
+                .and_then(scope_path_from_str),
+            search_target,
+        });
+    }
+
+    Ok(candidates)
 }
 
 fn collect_gemini_query_candidates(
@@ -4141,10 +5274,53 @@ fn collect_gemini_query_candidates(
             continue;
         }
         let session_id = session_id.to_ascii_lowercase();
+        let scope_path = extract_gemini_scope_path(&path);
         candidates.push(make_file_candidate(
+            ProviderKind::Gemini,
             session_id.clone(),
             format!("agents://gemini/{session_id}"),
             path,
+            scope_path,
+        ));
+    }
+
+    candidates
+}
+
+fn collect_kimi_query_candidates(
+    roots: &ProviderRoots,
+    _warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate> {
+    let sessions_root = roots.kimi_root.join("sessions");
+    if !sessions_root.exists() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(&sessions_root)
+        .min_depth(2)
+        .max_depth(2)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        if !is_uuid_session_id(&dir_name) {
+            continue;
+        }
+        let context_path = entry.path().join("context.jsonl");
+        if !context_path.exists() {
+            continue;
+        }
+        let session_id = dir_name.to_ascii_lowercase();
+        candidates.push(make_file_candidate(
+            ProviderKind::Kimi,
+            session_id.clone(),
+            format!("agents://kimi/{session_id}"),
+            context_path,
+            None,
         ));
     }
 
@@ -4176,10 +5352,13 @@ fn collect_pi_query_candidates(
         match extract_pi_session_id_from_header(&path) {
             Ok(Some(session_id)) => {
                 let session_id = session_id.to_ascii_lowercase();
+                let scope_path = extract_pi_scope_path(&path);
                 candidates.push(make_file_candidate(
+                    ProviderKind::Pi,
                     session_id.clone(),
                     format!("agents://pi/{session_id}"),
                     path,
+                    scope_path,
                 ));
             }
             Ok(None) => {}
@@ -4209,10 +5388,10 @@ fn collect_opencode_query_candidates(
 
     let mut stmt = conn
         .prepare(
-            "SELECT s.id, COALESCE(MAX(m.time_created), 0)
+            "SELECT s.id, s.directory, COALESCE(MAX(m.time_created), 0)
              FROM session s
              LEFT JOIN message m ON m.session_id = s.id
-             GROUP BY s.id
+             GROUP BY s.id, s.directory
              ORDER BY COALESCE(MAX(m.time_created), 0) DESC, s.id DESC",
         )
         .map_err(|source| XurlError::Sqlite {
@@ -4224,7 +5403,8 @@ fn collect_opencode_query_candidates(
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, i64>(2)
                     .ok()
                     .and_then(|stamp| u64::try_from(stamp).ok()),
             ))
@@ -4236,7 +5416,7 @@ fn collect_opencode_query_candidates(
 
     let mut candidates = Vec::new();
     for row in rows {
-        let (session_id, updated_epoch) = row.map_err(|source| XurlError::Sqlite {
+        let (session_id, directory, updated_epoch) = row.map_err(|source| XurlError::Sqlite {
             path: db_path.clone(),
             source,
         })?;
@@ -4254,11 +5434,13 @@ fn collect_opencode_query_candidates(
         };
 
         candidates.push(QueryCandidate {
+            provider: ProviderKind::Opencode,
             thread_id: session_id.clone(),
             uri: format!("agents://opencode/{session_id}"),
             thread_source: format!("{}#session:{session_id}", db_path.display()),
             updated_at: updated_epoch.map(|value| value.to_string()),
             updated_epoch,
+            scope_path: directory.as_deref().and_then(scope_path_from_str),
             search_target,
         });
     }
@@ -4392,16 +5574,18 @@ fn fetch_opencode_search_text(
     Ok(chunks.join("\n"))
 }
 
-fn collect_simple_file_candidates<F, G>(
+fn collect_simple_file_candidates<F, G, H>(
     provider: ProviderKind,
     root: &Path,
     path_filter: F,
     thread_id_extractor: G,
+    scope_path_extractor: H,
     warnings: &mut Vec<String>,
 ) -> Vec<QueryCandidate>
 where
     F: Fn(&Path) -> bool,
     G: Fn(&Path) -> Option<String>,
+    H: Fn(&Path) -> Option<PathBuf>,
 {
     if !root.exists() {
         return Vec::new();
@@ -4428,22 +5612,32 @@ where
             continue;
         };
         candidates.push(make_file_candidate(
+            provider,
             thread_id.clone(),
             format!("agents://{provider}/{thread_id}"),
-            path,
+            path.clone(),
+            scope_path_extractor(&path),
         ));
     }
 
     candidates
 }
 
-fn make_file_candidate(thread_id: String, uri: String, path: PathBuf) -> QueryCandidate {
+fn make_file_candidate(
+    provider: ProviderKind,
+    thread_id: String,
+    uri: String,
+    path: PathBuf,
+    scope_path: Option<PathBuf>,
+) -> QueryCandidate {
     QueryCandidate {
+        provider,
         thread_id,
         uri,
         thread_source: path.display().to_string(),
         updated_at: modified_timestamp_string(&path),
         updated_epoch: file_modified_epoch(&path),
+        scope_path,
         search_target: QuerySearchTarget::File(path),
     }
 }
@@ -4719,10 +5913,18 @@ fn render_subagent_detail_markdown(view: &SubagentDetailView) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use tempfile::tempdir;
 
-    use crate::service::{extract_last_timestamp, read_thread_raw};
+    use crate::service::{
+        collect_claude_thread_metadata, collect_codex_thread_metadata, collect_pi_thread_metadata,
+        extract_last_timestamp, read_thread_raw,
+    };
+    use crate::{
+        ProviderKind, ThreadQuery, ThreadQueryItem, ThreadQueryResult,
+        render_thread_query_head_markdown,
+    };
 
     #[test]
     fn empty_file_returns_error() {
@@ -4740,5 +5942,106 @@ mod tests {
             "{\"timestamp\":\"2026-02-23T00:00:01Z\"}\n{\"timestamp\":\"2026-02-23T00:00:02Z\"}\n";
         let timestamp = extract_last_timestamp(raw).expect("must extract timestamp");
         assert_eq!(timestamp, "2026-02-23T00:00:02Z");
+    }
+
+    #[test]
+    fn codex_thread_metadata_flattens_records_to_key_value_lines() {
+        let raw = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\",\"base_instructions\":{\"text\":\"very long\"},\"git\":{\"branch\":\"main\",\"commit_hash\":\"deadbeef\"}}}\n",
+            "{\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.3-codex\",\"approval_policy\":\"never\",\"sandbox_policy\":{\"type\":\"danger-full-access\"}}}\n",
+        );
+
+        let (metadata, warnings) = collect_codex_thread_metadata(Path::new("/tmp/mock"), raw);
+        assert!(warnings.is_empty());
+        assert!(metadata.iter().any(|item| item == "type = session_meta"));
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "payload.cwd = /tmp/project")
+        );
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "payload.git.branch = main")
+        );
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "payload.git.commit_hash = deadbeef")
+        );
+        assert!(
+            !metadata
+                .iter()
+                .any(|item| item.contains("base_instructions"))
+        );
+        assert!(!metadata.iter().any(|item| item.contains("payload.model =")));
+    }
+
+    #[test]
+    fn claude_thread_metadata_flattens_raw_keys() {
+        let raw = "{\"type\":\"user\",\"cwd\":\"/tmp/project\",\"gitBranch\":\"feature/x\",\"version\":\"1.2.3\"}\n";
+
+        let (metadata, warnings) = collect_claude_thread_metadata(Path::new("/tmp/mock"), raw);
+        assert!(warnings.is_empty());
+        assert!(metadata.iter().any(|item| item == "type = user"));
+        assert!(metadata.iter().any(|item| item == "cwd = /tmp/project"));
+        assert!(metadata.iter().any(|item| item == "gitBranch = feature/x"));
+        assert!(metadata.iter().any(|item| item == "version = 1.2.3"));
+    }
+
+    #[test]
+    fn pi_thread_metadata_flattens_raw_records() {
+        let raw = concat!(
+            "{\"type\":\"session\",\"id\":\"12cb4c19-2774-4de4-a0d0-9fa32fbae29f\",\"cwd\":\"/tmp/project\"}\n",
+            "{\"type\":\"model_change\",\"modelId\":\"gpt-5.3-codex\"}\n",
+            "{\"type\":\"thinking_level_change\",\"thinkingLevel\":\"medium\"}\n",
+        );
+
+        let (metadata, warnings) = collect_pi_thread_metadata(Path::new("/tmp/mock"), raw);
+        assert!(warnings.is_empty());
+        assert!(metadata.iter().any(|item| item == "type = session"));
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item == "id = 12cb4c19-2774-4de4-a0d0-9fa32fbae29f")
+        );
+        assert!(metadata.iter().any(|item| item == "cwd = /tmp/project"));
+        assert!(!metadata.iter().any(|item| item.contains("model_change")));
+        assert!(
+            !metadata
+                .iter()
+                .any(|item| item.contains("thinking_level_change"))
+        );
+    }
+
+    #[test]
+    fn render_thread_query_head_renders_metadata_entries() {
+        let result = ThreadQueryResult {
+            query: ThreadQuery {
+                uri: "agents://codex?limit=1".to_string(),
+                provider: ProviderKind::Codex,
+                role: None,
+                q: None,
+                limit: 1,
+                ignored_params: Vec::new(),
+            },
+            items: vec![ThreadQueryItem {
+                provider: ProviderKind::Codex,
+                thread_id: "019c871c-b1f9-7f60-9c4f-87ed09f13592".to_string(),
+                uri: "agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592".to_string(),
+                thread_source: "/tmp/mock.jsonl".to_string(),
+                updated_at: Some("123".to_string()),
+                matched_preview: None,
+                thread_metadata: Some(vec![
+                    "type = session_meta".to_string(),
+                    "payload.cwd = /tmp/project".to_string(),
+                ]),
+            }],
+            warnings: Vec::new(),
+        };
+
+        let output = render_thread_query_head_markdown(&result);
+        assert!(output.contains("thread_metadata:"));
+        assert!(output.contains("payload.cwd = /tmp/project"));
     }
 }

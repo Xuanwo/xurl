@@ -5,17 +5,29 @@
 - `xurl-cli`: thin CLI that parses `xurl <uri>` arguments with `clap`, wires up `ProviderRoots::from_env_or_home`, emits metadata warnings to `stderr`, and prints rendered markdown (`render_thread_markdown`).
 
 ## CLI Parameter & Provider Behavior Matrix
-- The CLI accepts a single `<uri>` (`codex://<id>`, `codex://threads/<id>`, `claude://<id>`, or `opencode://<id>`) and an optional `-I/--head` flag for frontmatter-only output.
+- The CLI accepts a single `<uri>` and an optional `-I/--head` flag for frontmatter-only output.
 - `ProviderRoots::from_env_or_home` sources the base directories using:
   - Codex: `CODEX_HOME` then `~/.codex`
   - Claude: `CLAUDE_CONFIG_DIR` then `~/.claude`
   - OpenCode: `XDG_DATA_HOME/opencode` then `~/.local/share/opencode`
 - `render_thread_markdown` converts provider payloads into a markdown thread view with frontmatter metadata plus user/assistant-focused content; warnings from `resolved.metadata.warnings` are emitted to `stderr` before the primary output.
 
+## Design Docs
+- Design documents live under `docs/`.
+- Before proposing, implementing, or revising URI behavior, query behavior, or other user-facing semantics, read the relevant design docs in `docs/` first and align with them.
+- If implementation diverges from an existing design doc, update the design doc in the same change or explain clearly why the divergence is intentional.
+
 ## Error Handling & Exit Contract
 - `main` maps any `xurl_core::Result` failure to a non-zero exit code (1) and prints `error: <message>` on `stderr`; successes return exit code 0.
 - Common failure cases include invalid URI syntax, missing provider roots, unresolved session IDs, unreadable files, empty files, and non-UTF-8 payloads (`read_thread_raw` explicitly guards against empty and non-UTF8 data).
 - Metadata warnings and diagnostics are printed on `stderr` but do not change the exit code, making it clear that only `Err` results trigger failure.
+
+## Agent-Oriented Output Contract
+- Treat every user-facing output as agent-facing by default, including stderr diagnostics, warnings, markdown summaries, and discovery metadata.
+- Outputs should not stop at reporting what happened; they should help the caller decide the next action with minimal inference.
+- When an operation fails or a capability is unsupported, prefer output that includes both the current state or evidence and concrete next steps.
+- When evidence exists in the implementation (for example searched roots, requested URI, provider name, unsupported capability, or expected identifier shape), surface that evidence instead of collapsing it into a generic message.
+- Optimize wording for actionability over narration: tell the caller what is true now, what they can try next, and when they should open an issue instead of retrying.
 
 ## Style, Lint & Test Constraints
 - The workspace enforces `cargo clippy` with `all = warn` and `pedantic = warn` at the root (`Cargo.toml` workspace lints); follow Rust formatting conventions and keep identifiers/comments in English.
@@ -38,12 +50,15 @@
 - A change is not complete if runtime behavior and skill/readme docs diverge.
 
 ## Documentation Audience & Style
-- Treat documentation as user-facing by default. Focus on capabilities and usage, not implementation details.
-- Do not frame docs as "what xurl is not". State what users can do and how to do it.
+- `README.md` and `skills/xurl/SKILL.md` are both user-facing documents.
+- Keep user docs concise and restrained. Focus on what users can do and how to do it.
+- Do not pad user docs with implementation detail, caveat catalogs, or negative capability statements.
+- If a missing capability is important enough to mention, create or update a GitHub issue instead of documenting the limitation in `README.md` or `skills/xurl/SKILL.md`.
+- Only mention a limitation in user docs when omitting it would make the documented command unsafe or misleading; keep that note to one short action-oriented sentence.
 - Keep wording task-oriented and action-first (for example: read, discover, start, continue, save).
 - Prefer conversation-oriented language in user docs. Use `thread/session` only when required by literal CLI syntax, URI forms, or field names.
 - `README.md` is for human users:
-  - prioritize quick onboarding, command examples, option semantics, provider capability boundaries, and troubleshooting.
+  - prioritize quick onboarding, command examples, option semantics, and troubleshooting.
   - avoid internal architecture, backend adapter design, and code-structure explanations unless strictly necessary.
 - `skills/xurl/SKILL.md` is for agent users:
   - prioritize execution workflow (`when to use`, `read/discover/write steps`, command rules, failure handling).

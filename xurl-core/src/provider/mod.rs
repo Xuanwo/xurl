@@ -9,7 +9,10 @@ use crate::model::{ProviderKind, ResolvedThread, WriteRequest, WriteResult};
 pub mod amp;
 pub mod claude;
 pub mod codex;
+pub mod copilot;
+pub mod cursor;
 pub mod gemini;
+pub mod kimi;
 pub mod openclaw;
 pub mod opencode;
 pub mod pi;
@@ -56,9 +59,12 @@ pub trait Provider {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderRoots {
     pub amp_root: PathBuf,
+    pub copilot_root: PathBuf,
     pub codex_root: PathBuf,
     pub claude_root: PathBuf,
+    pub cursor_root: PathBuf,
     pub gemini_root: PathBuf,
+    pub kimi_root: PathBuf,
     pub pi_root: PathBuf,
     pub opencode_root: PathBuf,
     pub openclaw_root: PathBuf,
@@ -78,6 +84,14 @@ impl ProviderRoots {
             .unwrap_or_else(|| home.join(".local/share/amp"));
 
         // Precedence:
+        // 1) COPILOT_HOME (official Copilot CLI config/data root env)
+        // 2) ~/.copilot (Copilot CLI default)
+        let copilot_root = env::var_os("COPILOT_HOME")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".copilot"));
+
+        // Precedence:
         // 1) CODEX_HOME (official Codex home env)
         // 2) ~/.codex (Codex default)
         let codex_root = env::var_os("CODEX_HOME")
@@ -92,12 +106,30 @@ impl ProviderRoots {
             .unwrap_or_else(|| home.join(".claude"));
 
         // Precedence:
+        // 1) CURSOR_DATA_DIR
+        // 2) CURSOR_CONFIG_DIR
+        // 3) ~/.cursor
+        let cursor_root = env::var_os("CURSOR_DATA_DIR")
+            .filter(|path| !path.is_empty())
+            .or_else(|| env::var_os("CURSOR_CONFIG_DIR").filter(|path| !path.is_empty()))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".cursor"));
+
+        // Precedence:
         // 1) GEMINI_CLI_HOME/.gemini (official Gemini CLI home env)
         // 2) ~/.gemini (Gemini default)
         let gemini_root = env::var_os("GEMINI_CLI_HOME")
             .map(PathBuf::from)
             .map(|path| path.join(".gemini"))
             .unwrap_or_else(|| home.join(".gemini"));
+
+        // Precedence:
+        // 1) KIMI_SHARE_DIR (official Kimi share dir env)
+        // 2) ~/.kimi (Kimi default)
+        let kimi_root = env::var_os("KIMI_SHARE_DIR")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".kimi"));
 
         // Precedence:
         // 1) PI_CODING_AGENT_DIR (official pi coding agent root env)
@@ -126,9 +158,12 @@ impl ProviderRoots {
 
         Ok(Self {
             amp_root,
+            copilot_root,
             codex_root,
             claude_root,
+            cursor_root,
             gemini_root,
+            kimi_root,
             pi_root,
             opencode_root,
             openclaw_root,

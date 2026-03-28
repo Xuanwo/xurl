@@ -1,10 +1,12 @@
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
+use dirs::home_dir;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::error::{Result, XurlError};
-use crate::model::{ProviderKind, ThreadQuery};
+use crate::model::{PathThreadQuery, ProviderKind, ThreadQuery};
 
 static SESSION_ID_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -127,9 +129,12 @@ fn parse_legacy_target<'a>(scheme: &str, target: &'a str, input: &str) -> Result
     let provider = parse_provider(scheme)?;
     let normalized_target = match provider {
         ProviderKind::Amp => target,
+        ProviderKind::Copilot => target,
         ProviderKind::Codex => target.strip_prefix("threads/").unwrap_or(target),
         ProviderKind::Claude
+        | ProviderKind::Cursor
         | ProviderKind::Gemini
+        | ProviderKind::Kimi
         | ProviderKind::Pi
         | ProviderKind::Opencode
         | ProviderKind::Openclaw => target,
@@ -183,8 +188,11 @@ impl FromStr for AgentsUri {
                 return Err(XurlError::InvalidSessionId(raw_id.to_string()));
             }
             ProviderKind::Codex
+            | ProviderKind::Copilot
             | ProviderKind::Claude
+            | ProviderKind::Cursor
             | ProviderKind::Gemini
+            | ProviderKind::Kimi
             | ProviderKind::Pi
             | ProviderKind::Openclaw
                 if !is_uuid_session_id(raw_id) =>
@@ -207,8 +215,11 @@ impl FromStr for AgentsUri {
         let session_id = match provider {
             ProviderKind::Amp => format!("T-{}", raw_id[2..].to_ascii_lowercase()),
             ProviderKind::Codex
+            | ProviderKind::Copilot
             | ProviderKind::Claude
+            | ProviderKind::Cursor
             | ProviderKind::Gemini
+            | ProviderKind::Kimi
             | ProviderKind::Pi
             | ProviderKind::Openclaw => raw_id.to_ascii_lowercase(),
             ProviderKind::Opencode => raw_id.to_string(),
@@ -217,7 +228,9 @@ impl FromStr for AgentsUri {
         let agent_id = raw_agent_id.map(|agent_id| {
             if provider == ProviderKind::Amp && AMP_SESSION_ID_RE.is_match(&agent_id) {
                 format!("T-{}", agent_id[2..].to_ascii_lowercase())
-            } else if ((provider == ProviderKind::Codex || provider == ProviderKind::Gemini)
+            } else if ((provider == ProviderKind::Codex
+                || provider == ProviderKind::Copilot
+                || provider == ProviderKind::Gemini)
                 && SESSION_ID_RE.is_match(&agent_id))
                 || (provider == ProviderKind::Pi
                     && (is_uuid_session_id(&agent_id) || PI_SHORT_ENTRY_ID_RE.is_match(&agent_id)))
@@ -326,9 +339,12 @@ fn hex_value(ch: u8) -> Option<u8> {
 fn parse_provider(scheme: &str) -> Result<ProviderKind> {
     match scheme {
         "amp" => Ok(ProviderKind::Amp),
+        "copilot" => Ok(ProviderKind::Copilot),
         "codex" => Ok(ProviderKind::Codex),
         "claude" => Ok(ProviderKind::Claude),
+        "cursor" => Ok(ProviderKind::Cursor),
         "gemini" => Ok(ProviderKind::Gemini),
+        "kimi" => Ok(ProviderKind::Kimi),
         "pi" => Ok(ProviderKind::Pi),
         "opencode" => Ok(ProviderKind::Opencode),
         "openclaw" => Ok(ProviderKind::Openclaw),
@@ -339,10 +355,14 @@ fn parse_provider(scheme: &str) -> Result<ProviderKind> {
 fn looks_like_session_id(provider: ProviderKind, token: &str) -> bool {
     match provider {
         ProviderKind::Amp => AMP_SESSION_ID_RE.is_match(token),
-        ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini | ProviderKind::Pi => {
-            is_uuid_session_id(token)
-        }
-        ProviderKind::Openclaw => is_uuid_session_id(token),
+        ProviderKind::Codex
+        | ProviderKind::Copilot
+        | ProviderKind::Claude
+        | ProviderKind::Cursor
+        | ProviderKind::Gemini
+        | ProviderKind::Kimi
+        | ProviderKind::Pi
+        | ProviderKind::Openclaw => is_uuid_session_id(token),
         ProviderKind::Opencode => OPENCODE_SESSION_ID_RE.is_match(token),
     }
 }
@@ -405,6 +425,166 @@ fn parse_thread_query_pairs(
     }
 
     Ok((q, limit.unwrap_or(10), ignored_params))
+}
+
+struct PathThreadQueryParams {
+    q: Option<String>,
+    limit: usize,
+    providers: Option<Vec<ProviderKind>>,
+    ignored_params: Vec<String>,
+}
+
+fn parse_path_thread_query_pairs(input: &str, query_raw: &str) -> Result<PathThreadQueryParams> {
+    let mut q = None::<String>;
+    let mut limit = None::<usize>;
+    let mut providers = None::<Vec<ProviderKind>>;
+    let mut ignored_params = Vec::<String>::new();
+
+    for pair in query_raw.split('&').filter(|pair| !pair.is_empty()) {
+        let (raw_key, raw_value) = pair.split_once('=').map_or((pair, ""), |parts| parts);
+        let key = percent_decode_component(raw_key)?;
+        let value = percent_decode_component(raw_value)?;
+
+        match key.as_str() {
+            "q" => {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    q = Some(trimmed.to_string());
+                }
+            }
+            "limit" => {
+                limit = Some(value.parse::<usize>().map_err(|_| {
+                    XurlError::InvalidUri(format!("{input} (invalid limit={value})"))
+                })?);
+            }
+            "providers" => {
+                providers = Some(parse_provider_list(input, &value)?);
+            }
+            _ => {
+                if !ignored_params.iter().any(|existing| existing == &key) {
+                    ignored_params.push(key);
+                }
+            }
+        }
+    }
+
+    Ok(PathThreadQueryParams {
+        q,
+        limit: limit.unwrap_or(10),
+        providers,
+        ignored_params,
+    })
+}
+
+fn parse_provider_list(input: &str, raw: &str) -> Result<Vec<ProviderKind>> {
+    let mut providers = Vec::new();
+    for entry in raw.split(',') {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            return Err(XurlError::InvalidUri(format!(
+                "{input} (invalid providers={raw})"
+            )));
+        }
+        let provider = parse_provider(trimmed)?;
+        if !providers.contains(&provider) {
+            providers.push(provider);
+        }
+    }
+
+    if providers.is_empty() {
+        return Err(XurlError::InvalidUri(format!(
+            "{input} (invalid providers={raw})"
+        )));
+    }
+
+    Ok(providers)
+}
+
+pub fn parse_path_query_uri(input: &str) -> Result<Option<PathThreadQuery>> {
+    let Some(target_with_query) = input.strip_prefix("agents://") else {
+        return Ok(None);
+    };
+
+    let (target, raw_query) = split_target_and_query(target_with_query);
+    let Some(scope_path) = normalize_path_query_target(target)? else {
+        return Ok(None);
+    };
+    let raw_query = raw_query.unwrap_or_default();
+    let params = parse_path_thread_query_pairs(input, raw_query)?;
+
+    Ok(Some(PathThreadQuery {
+        uri: canonical_path_query_uri(&scope_path, raw_query),
+        scope_path: scope_path.display().to_string(),
+        providers: params.providers,
+        q: params.q,
+        limit: params.limit,
+        ignored_params: params.ignored_params,
+    }))
+}
+
+fn canonical_path_query_uri(scope_path: &Path, raw_query: &str) -> String {
+    let mut uri = format!("agents://{}", scope_path.display());
+    if !raw_query.is_empty() {
+        uri.push('?');
+        uri.push_str(raw_query);
+    }
+    uri
+}
+
+fn normalize_path_query_target(target: &str) -> Result<Option<PathBuf>> {
+    if target.is_empty() {
+        return Ok(None);
+    }
+
+    if target.starts_with('/') {
+        return Ok(Some(normalize_lexical_path(Path::new(target))));
+    }
+
+    if target == "." || target == ".." || target.starts_with("./") || target.starts_with("../") {
+        let cwd = std::env::current_dir().map_err(|source| XurlError::Io {
+            path: PathBuf::from("."),
+            source,
+        })?;
+        return Ok(Some(normalize_lexical_path(&cwd.join(target))));
+    }
+
+    if target == "~" || target.starts_with("~/") {
+        let home = home_dir().ok_or(XurlError::HomeDirectoryNotFound)?;
+        let suffix = target.strip_prefix('~').unwrap_or_default();
+        return Ok(Some(normalize_lexical_path(
+            &home.join(suffix.strip_prefix('/').unwrap_or(suffix)),
+        )));
+    }
+
+    Ok(None)
+}
+
+fn normalize_lexical_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    let mut saw_root = false;
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => {
+                normalized.push(Path::new(component.as_os_str()));
+                saw_root = true;
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() && !saw_root {
+                    normalized.push("..");
+                }
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+
+    if normalized.as_os_str().is_empty() && saw_root {
+        PathBuf::from(Path::new("/"))
+    } else {
+        normalized
+    }
 }
 
 pub fn parse_collection_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
@@ -513,7 +693,15 @@ fn hex_nibble(value: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentsUri, parse_collection_query_uri, parse_role_query_uri, parse_role_uri};
+    use std::env;
+
+    use dirs::home_dir;
+    use tempfile::tempdir;
+
+    use super::{
+        AgentsUri, parse_collection_query_uri, parse_path_query_uri, parse_role_query_uri,
+        parse_role_uri,
+    };
     use crate::model::ProviderKind;
 
     #[test]
@@ -730,17 +918,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_unsupported_scheme() {
-        let err = AgentsUri::parse("cursor://019c871c-b1f9-7f60-9c4f-87ed09f13592")
-            .expect_err("must reject unsupported scheme");
-        assert!(format!("{err}").contains("unsupported scheme"));
+    fn parse_valid_cursor_uri() {
+        let uri = AgentsUri::parse("cursor://019c871c-b1f9-7f60-9c4f-87ed09f13592")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Cursor);
+        assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
+        assert_eq!(uri.agent_id, None);
     }
 
     #[test]
-    fn parse_rejects_invalid_agents_provider() {
-        let err = AgentsUri::parse("agents://cursor/019c871c-b1f9-7f60-9c4f-87ed09f13592")
-            .expect_err("must reject provider");
-        assert!(format!("{err}").contains("unsupported scheme"));
+    fn parse_valid_agents_cursor_uri() {
+        let uri = AgentsUri::parse("agents://cursor/019c871c-b1f9-7f60-9c4f-87ed09f13592")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Cursor);
+        assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
+        assert_eq!(uri.agent_id, None);
     }
 
     #[test]
@@ -871,6 +1063,72 @@ mod tests {
         assert_eq!(query.role, None);
         assert_eq!(query.q, Some("spawn agent".to_string()));
         assert_eq!(query.limit, 7);
+    }
+
+    #[test]
+    fn parse_path_query_uri_with_absolute_path() {
+        let query = parse_path_query_uri("agents:///tmp/project?q=spawn+agent&limit=7")
+            .expect("path query parse must work");
+        let query = query.expect("query should be present");
+        assert_eq!(query.uri, "agents:///tmp/project?q=spawn+agent&limit=7");
+        assert_eq!(query.scope_path, "/tmp/project");
+        assert_eq!(query.q, Some("spawn agent".to_string()));
+        assert_eq!(query.limit, 7);
+        assert_eq!(query.providers, None);
+    }
+
+    #[test]
+    fn parse_path_query_uri_with_relative_current_dir() {
+        let temp = tempdir().expect("tempdir");
+        let cwd = temp.path().join("workspace").join("subdir");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let old = env::current_dir().expect("cwd");
+        env::set_current_dir(&cwd).expect("chdir");
+        let actual_cwd = env::current_dir().expect("actual cwd");
+
+        let query = parse_path_query_uri("agents://../repo?q=hello")
+            .expect("path query parse must work")
+            .expect("query should be present");
+
+        env::set_current_dir(old).expect("restore cwd");
+        assert_eq!(
+            query.scope_path,
+            actual_cwd
+                .parent()
+                .expect("parent")
+                .join("repo")
+                .display()
+                .to_string()
+        );
+        assert_eq!(
+            query.uri,
+            format!(
+                "agents://{}?q=hello",
+                actual_cwd.parent().expect("parent").join("repo").display()
+            )
+        );
+    }
+
+    #[test]
+    fn parse_path_query_uri_with_home_shorthand() {
+        let home = home_dir().expect("home");
+        let query = parse_path_query_uri("agents://~/work/xurl?providers=codex,claude")
+            .expect("path query parse must work")
+            .expect("query should be present");
+        assert_eq!(
+            query.scope_path,
+            home.join("work/xurl").display().to_string()
+        );
+        assert_eq!(
+            query.providers,
+            Some(vec![ProviderKind::Codex, ProviderKind::Claude])
+        );
+    }
+
+    #[test]
+    fn parse_path_query_uri_returns_none_for_global_form() {
+        let query = parse_path_query_uri("agents://?q=hello").expect("parse must succeed");
+        assert_eq!(query, None);
     }
 
     #[test]

@@ -14,7 +14,7 @@ jobs:
       is_prerelease: ${{ steps.resolve-version.outputs.is_prerelease }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Resolve release version
         id: resolve-version
@@ -64,7 +64,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Inject release version into Cargo manifests
         shell: bash
@@ -110,14 +110,14 @@ jobs:
             "${{ matrix.platform.binary }}"
 
       - name: Upload release archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.platform.target }}
           path: dist/release/*.tar.gz
           if-no-files-found: error
 
       - name: Upload vendor artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: vendor-${{ matrix.platform.target }}
           path: dist/vendor/${{ matrix.platform.target }}
@@ -133,7 +133,7 @@ jobs:
       contents: write
     steps:
       - name: Download release archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: dist/release
           pattern: release-*
@@ -195,7 +195,7 @@ jobs:
           RELEASE_TAG: v${{ needs.validate-tag.outputs.version }}
 
       - name: Upload release metadata artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-metadata
           path: |
@@ -204,15 +204,36 @@ jobs:
           if-no-files-found: error
 
       - name: Publish release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.validate-tag.outputs.version }}
-          prerelease: ${{ needs.validate-tag.outputs.is_prerelease == 'true' }}
-          files: |
-            dist/release/xurl-${{ needs.validate-tag.outputs.version }}-*.tar.gz
-            dist/release/checksums.txt
-            dist/release/manifest.json
-          overwrite_files: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${{ needs.validate-tag.outputs.version }}"
+          tag="v${version}"
+
+          shopt -s nullglob
+          archives=(dist/release/xurl-"${version}"-*.tar.gz)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No release archives found for ${tag}"
+            exit 1
+          fi
+
+          files=("${archives[@]}" dist/release/checksums.txt dist/release/manifest.json)
+          prerelease_flag=()
+          if [[ "${{ needs.validate-tag.outputs.is_prerelease }}" == "true" ]]; then
+            prerelease_flag+=(--prerelease)
+          fi
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${files[@]}" --clobber
+          else
+            gh release create "${tag}" "${files[@]}" \
+              --title "${tag}" \
+              --verify-tag \
+              "${prerelease_flag[@]}"
+          fi
 
   publish-crates:
     name: Publish crates.io packages
@@ -229,7 +250,7 @@ jobs:
       RELEASE_VERSION: ${{ needs.validate-tag.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Inject release version into Cargo manifests
         shell: bash

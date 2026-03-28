@@ -14,6 +14,7 @@ const REAL_FIXTURE_MAIN_ID: &str = "55fe4488-c6bd-46fa-9390-dab3b8860b95";
 const REAL_FIXTURE_AGENT_ID: &str = "29bf19c3-b83e-401d-8f38-5660b7f67152";
 const AMP_SESSION_ID: &str = "T-019c0797-c402-7389-bd80-d785c98df295";
 const AMP_SUBAGENT_ID: &str = "T-1abc0797-c402-7389-bd80-d785c98df295";
+const COPILOT_REAL_SESSION_ID: &str = "688628a1-407a-4b4e-b24a-1a250ebf864f";
 const GEMINI_SESSION_ID: &str = "29d207db-ca7e-40ba-87f7-e14c9de60613";
 const GEMINI_CHILD_SESSION_ID: &str = "2b112c8a-d80a-4cff-9c8a-6f3e6fbaf7fb";
 const GEMINI_MISSING_CHILD_SESSION_ID: &str = "62f9f98d-c578-4d3a-b4bf-3aaed19889d6";
@@ -27,6 +28,7 @@ const CLAUDE_SESSION_ID: &str = "2823d1df-720a-4c31-ac55-ae8ba726721f";
 const CLAUDE_AGENT_ID: &str = "acompact-69d537";
 const CLAUDE_REAL_MAIN_ID: &str = "b90fc33d-33cb-4027-8558-119e2b56c74e";
 const CLAUDE_REAL_AGENT_ID: &str = "a4f21c7";
+const CURSOR_REAL_SESSION_ID: &str = "6ab9d67a-7ad8-4b98-b347-06fa073cffd0";
 const OPENCODE_REAL_SESSION_ID: &str = "ses_7v2md9kx3c1p";
 const OPENCODE_MAIN_SESSION_ID: &str = "ses_5x7md9kx3c1p";
 const OPENCODE_CHILD_SESSION_ID: &str = "ses_5x7md9kx3c2p";
@@ -48,6 +50,47 @@ fn setup_codex_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_codex_tree_with_metadata() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let thread_path = temp.path().join(format!(
+        "sessions/2026/02/23/rollout-2026-02-23T04-48-50-{SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &thread_path,
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/project\",\"git\":{\"branch\":\"main\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"world\"}]}}\n"
+        ),
+    )
+    .expect("write");
+
+    temp
+}
+
+fn setup_codex_tree_with_scope(scope: &Path) -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let thread_path = temp.path().join(format!(
+        "sessions/2026/02/23/rollout-2026-02-23T04-48-50-{SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &thread_path,
+        format!(
+            concat!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":\"{}\",\"git\":{{\"branch\":\"main\"}}}}}}\n",
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"hello\"}}]}}}}\n",
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"world\"}}]}}}}\n"
+            ),
+            scope.display()
+        ),
+    )
+    .expect("write");
+
+    temp
+}
+
 fn setup_codex_tree_with_sqlite_missing_threads() -> tempfile::TempDir {
     let temp = setup_codex_tree();
     fs::write(temp.path().join("state.sqlite"), "").expect("write sqlite");
@@ -62,7 +105,11 @@ fn setup_codex_role_query_tree() -> tempfile::TempDir {
     fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
     fs::write(
         &thread_path,
-        "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"run reviewer role\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"reviewer done\"}]}}\n",
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/reviewer\",\"git\":{\"branch\":\"review-main\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"run reviewer role\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"reviewer done\"}]}}\n"
+        ),
     )
     .expect("write");
     temp
@@ -100,7 +147,7 @@ fn setup_amp_tree() -> tempfile::TempDir {
     fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
     fs::write(
         &thread_path,
-        r#"{"id":"T-019c0797-c402-7389-bd80-d785c98df295","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]},{"role":"assistant","content":[{"type":"thinking","thinking":"analyze"},{"type":"text","text":"world"}]}]}"#,
+        r#"{"id":"T-019c0797-c402-7389-bd80-d785c98df295","cwd":"/tmp/project","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]},{"role":"assistant","content":[{"type":"thinking","thinking":"analyze"},{"type":"text","text":"world"}]}]}"#,
     )
     .expect("write");
     temp
@@ -190,7 +237,7 @@ fn setup_claude_subagent_tree() -> tempfile::TempDir {
     fs::write(
         &main_thread,
         format!(
-            "{{\"timestamp\":\"2026-02-23T00:00:00Z\",\"type\":\"user\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"message\":{{\"role\":\"user\",\"content\":\"root thread\"}}}}\n"
+            "{{\"timestamp\":\"2026-02-23T00:00:00Z\",\"type\":\"system\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"cwd\":\"/tmp/project\",\"message\":{{\"role\":\"system\",\"content\":\"meta\"}}}}\n{{\"timestamp\":\"2026-02-23T00:00:01Z\",\"type\":\"user\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"message\":{{\"role\":\"user\",\"content\":\"root thread\"}}}}\n"
         ),
     )
     .expect("write main");
@@ -201,7 +248,7 @@ fn setup_claude_subagent_tree() -> tempfile::TempDir {
     fs::write(
         &agent_thread,
         format!(
-            "{{\"timestamp\":\"2026-02-23T00:00:10Z\",\"type\":\"user\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"isSidechain\":true,\"agentId\":\"{CLAUDE_AGENT_ID}\",\"message\":{{\"role\":\"user\",\"content\":\"agent task\"}}}}\n{{\"timestamp\":\"2026-02-23T00:00:11Z\",\"type\":\"assistant\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"isSidechain\":true,\"agentId\":\"{CLAUDE_AGENT_ID}\",\"message\":{{\"role\":\"assistant\",\"content\":\"agent done\"}}}}\n"
+            "{{\"timestamp\":\"2026-02-23T00:00:10Z\",\"type\":\"user\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"isSidechain\":true,\"agentId\":\"{CLAUDE_AGENT_ID}\",\"cwd\":\"/tmp/project\",\"message\":{{\"role\":\"user\",\"content\":\"agent task\"}}}}\n{{\"timestamp\":\"2026-02-23T00:00:11Z\",\"type\":\"assistant\",\"sessionId\":\"{CLAUDE_SESSION_ID}\",\"isSidechain\":true,\"agentId\":\"{CLAUDE_AGENT_ID}\",\"cwd\":\"/tmp/project\",\"message\":{{\"role\":\"assistant\",\"content\":\"agent done\"}}}}\n"
         ),
     )
     .expect("write agent");
@@ -221,6 +268,7 @@ fn setup_gemini_tree() -> tempfile::TempDir {
             r#"{{
   "sessionId": "{GEMINI_SESSION_ID}",
   "projectHash": "0c0d7b04c22749f3687ea60b66949fd32bcea2551d4349bf72346a9ccc9a9ba4",
+  "projectRoot": "/tmp/project",
   "startTime": "2026-01-08T11:55:12.379Z",
   "lastUpdated": "2026-01-08T12:31:14.881Z",
   "messages": [
@@ -387,7 +435,8 @@ fn setup_opencode_subagent_tree() -> tempfile::TempDir {
         "
         CREATE TABLE session (
             id TEXT PRIMARY KEY,
-            parent_id TEXT
+            parent_id TEXT,
+            directory TEXT
         );
         CREATE TABLE message (
             id TEXT PRIMARY KEY,
@@ -407,18 +456,26 @@ fn setup_opencode_subagent_tree() -> tempfile::TempDir {
     .expect("create schema");
 
     conn.execute(
-        "INSERT INTO session (id, parent_id) VALUES (?1, NULL)",
-        [OPENCODE_MAIN_SESSION_ID],
+        "INSERT INTO session (id, parent_id, directory) VALUES (?1, NULL, ?2)",
+        params![OPENCODE_MAIN_SESSION_ID, "/tmp/project"],
     )
     .expect("insert main session");
     conn.execute(
-        "INSERT INTO session (id, parent_id) VALUES (?1, ?2)",
-        params![OPENCODE_CHILD_SESSION_ID, OPENCODE_MAIN_SESSION_ID],
+        "INSERT INTO session (id, parent_id, directory) VALUES (?1, ?2, ?3)",
+        params![
+            OPENCODE_CHILD_SESSION_ID,
+            OPENCODE_MAIN_SESSION_ID,
+            "/tmp/project"
+        ],
     )
     .expect("insert child session");
     conn.execute(
-        "INSERT INTO session (id, parent_id) VALUES (?1, ?2)",
-        params![OPENCODE_CHILD_EMPTY_SESSION_ID, OPENCODE_MAIN_SESSION_ID],
+        "INSERT INTO session (id, parent_id, directory) VALUES (?1, ?2, ?3)",
+        params![
+            OPENCODE_CHILD_EMPTY_SESSION_ID,
+            OPENCODE_MAIN_SESSION_ID,
+            "/tmp/project"
+        ],
     )
     .expect("insert empty child session");
 
@@ -535,8 +592,20 @@ fn gemini_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gemini_real_sanitized")
 }
 
+fn copilot_real_fixture_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/copilot_real_sanitized")
+}
+
 fn opencode_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/opencode_real_sanitized")
+}
+
+fn cursor_real_fixture_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cursor_real_sanitized")
+}
+
+fn cursor_real_uri() -> String {
+    format!("cursor://{CURSOR_REAL_SESSION_ID}")
 }
 
 fn pi_real_fixture_root() -> PathBuf {
@@ -609,6 +678,10 @@ fn gemini_missing_subagent_uri() -> String {
 
 fn gemini_real_uri() -> String {
     format!("gemini://{GEMINI_REAL_SESSION_ID}")
+}
+
+fn copilot_real_uri() -> String {
+    format!("copilot://{COPILOT_REAL_SESSION_ID}")
 }
 
 fn pi_uri() -> String {
@@ -731,7 +804,9 @@ fn output_flag_returns_error_when_parent_directory_missing() {
         .arg(&output_path)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("error: i/o error on"));
+        .stderr(predicate::str::contains("error: i/o error"))
+        .stderr(predicate::str::contains("path:"))
+        .stderr(predicate::str::contains("next_steps:"));
 }
 
 #[test]
@@ -778,7 +853,11 @@ fn skills_scheme_is_rejected() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "error: unsupported scheme: skills",
+            "error: unsupported scheme `skills`",
+        ))
+        .stderr(predicate::str::contains("supported_providers:"))
+        .stderr(predicate::str::contains(
+            "https://github.com/Xuanwo/xurl/issues/new",
         ));
 }
 
@@ -815,7 +894,7 @@ fn amp_collection_query_outputs_markdown() {
 
 #[test]
 fn codex_collection_query_outputs_markdown() {
-    let temp = setup_codex_tree();
+    let temp = setup_codex_tree_with_metadata();
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CODEX_HOME", temp.path())
@@ -827,7 +906,11 @@ fn codex_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains(format!(
             "agents://codex/{SESSION_ID}"
         )))
-        .stdout(predicate::str::contains("- Match:"));
+        .stdout(predicate::str::contains("- Match:"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session_meta"))
+        .stdout(predicate::str::contains("payload.cwd = /tmp/project"))
+        .stdout(predicate::str::contains("payload.git.branch = main"));
 }
 
 #[test]
@@ -861,7 +944,10 @@ fn role_query_outputs_markdown() {
         .stdout(predicate::str::contains(format!(
             "agents://codex/{SESSION_ID}"
         )))
-        .stdout(predicate::str::contains("- Match:"));
+        .stdout(predicate::str::contains("- Match:"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("payload.cwd = /tmp/reviewer"))
+        .stdout(predicate::str::contains("payload.git.branch = review-main"));
 }
 
 #[test]
@@ -893,7 +979,12 @@ fn claude_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains("# Threads"))
         .stdout(predicate::str::contains("- Limit: `1`"))
         .stdout(predicate::str::contains("agents://claude/"))
-        .stdout(predicate::str::contains("- Match:"));
+        .stdout(predicate::str::contains("- Match:"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains(format!(
+            "agentId = {CLAUDE_AGENT_ID}"
+        )))
+        .stdout(predicate::str::contains("isSidechain = true"));
 }
 
 #[test]
@@ -927,7 +1018,10 @@ fn pi_collection_query_outputs_markdown() {
         .stdout(predicate::str::contains(format!(
             "agents://pi/{PI_SESSION_ID}"
         )))
-        .stdout(predicate::str::contains("- Match:"));
+        .stdout(predicate::str::contains("- Match:"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session"))
+        .stdout(predicate::str::contains("cwd = /tmp/project"));
 }
 
 #[test]
@@ -963,6 +1057,40 @@ fn openclaw_collection_query_outputs_markdown() {
 }
 
 #[test]
+fn amp_path_query_outputs_markdown() {
+    let temp = setup_amp_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .arg("agents:///tmp/project?providers=amp&q=world&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
+        .stdout(predicate::str::contains("- Providers: `amp`"))
+        .stdout(predicate::str::contains("agents://amp/"))
+        .stdout(predicate::str::contains("- Provider: `amp`"));
+}
+
+#[test]
+fn codex_path_query_outputs_markdown() {
+    let temp = setup_codex_tree_with_metadata();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("agents:///tmp/project?providers=codex&q=hello&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
+        .stdout(predicate::str::contains("- Providers: `codex`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://codex/{SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Provider: `codex`"));
+}
+
+}
+
+#[test]
 fn collection_query_not_found_outputs_empty_list() {
     let temp = setup_codex_tree();
 
@@ -989,6 +1117,22 @@ fn head_flag_outputs_frontmatter_only() {
         .stdout(predicate::str::contains("mode: 'subagent_index'"))
         .stdout(predicate::str::contains("subagents:"))
         .stdout(predicate::str::contains("# Thread").not());
+}
+
+#[test]
+fn codex_collection_query_head_outputs_frontmatter_with_thread_metadata() {
+    let temp = setup_codex_tree_with_metadata();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("--head")
+        .arg("agents://codex?limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("payload.cwd = /tmp/project"))
+        .stdout(predicate::str::contains("payload.git.branch = main"))
+        .stdout(predicate::str::contains("# Threads").not());
 }
 
 #[test]
@@ -1129,6 +1273,33 @@ fn codex_real_fixture_head_includes_subagents() {
 }
 
 #[test]
+fn codex_real_fixture_head_includes_thread_metadata() {
+    let fixture_root = codex_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", fixture_root)
+        .env("CLAUDE_CONFIG_DIR", "/tmp/missing-claude")
+        .arg(format!("codex://{REAL_FIXTURE_MAIN_ID}"))
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session_meta"))
+        .stdout(predicate::str::contains(
+            "payload.cwd = /redacted/5fc12f120e/eaf99e1a0891",
+        ))
+        .stdout(predicate::str::contains(
+            "payload.git.branch = txt_1ee2ff8bde628ccd",
+        ))
+        .stdout(predicate::str::contains(
+            "payload.model_provider = txt_e55535ca2bfc02d0",
+        ))
+        .stdout(predicate::str::contains("base_instructions").not())
+        .stdout(predicate::str::contains("user_instructions").not());
+}
+
+#[test]
 fn codex_real_fixture_subagent_detail_outputs_markdown() {
     let fixture_root = codex_real_fixture_root();
     assert!(fixture_root.exists(), "fixture root must exist");
@@ -1169,7 +1340,11 @@ fn missing_thread_returns_non_zero() {
         .arg(codex_uri())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("thread not found"));
+        .stderr(predicate::str::contains(
+            "thread not found for provider `codex`",
+        ))
+        .stderr(predicate::str::contains("searched_roots:"))
+        .stderr(predicate::str::contains("xurl agents://codex"));
 }
 
 #[test]
@@ -1534,6 +1709,28 @@ fn pi_real_fixture_outputs_markdown() {
 }
 
 #[test]
+fn pi_real_fixture_head_includes_thread_metadata() {
+    let fixture_root = pi_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PI_CODING_AGENT_DIR", fixture_root)
+        .arg(pi_real_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session"))
+        .stdout(predicate::str::contains(
+            "cwd = /redacted/workspace/project",
+        ))
+        .stdout(predicate::str::contains("type = model_change").not())
+        .stdout(predicate::str::contains("modelId = gpt-5.3-codex").not())
+        .stdout(predicate::str::contains("type = thinking_level_change").not())
+        .stdout(predicate::str::contains("thinkingLevel = medium").not());
+}
+
+#[test]
 fn claude_subagent_outputs_markdown_view() {
     let temp = setup_claude_subagent_tree();
     let main_uri = agents_uri("claude", CLAUDE_SESSION_ID);
@@ -1572,6 +1769,26 @@ fn claude_real_fixture_head_includes_subagents() {
         .stdout(predicate::str::contains("subagents:"))
         .stdout(predicate::str::contains(subagent_uri))
         .stdout(predicate::str::contains("# Subagent Status").not());
+}
+
+#[test]
+fn claude_real_fixture_subagent_head_includes_thread_metadata() {
+    let fixture_root = claude_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CLAUDE_CONFIG_DIR", fixture_root)
+        .env("CODEX_HOME", "/tmp/missing-codex")
+        .arg(claude_real_subagent_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains(
+            "cwd = /redacted/57843fe62b/667def971841",
+        ))
+        .stdout(predicate::str::contains("gitBranch = txt_1ee2ff8bde628ccd"))
+        .stdout(predicate::str::contains("version = txt_3be394b47d685e0a"));
 }
 
 #[test]
@@ -1743,6 +1960,79 @@ fn gemini_real_fixture_outputs_markdown() {
 }
 
 #[test]
+fn copilot_real_fixture_outputs_markdown() {
+    let fixture_root = copilot_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("COPILOT_HOME", fixture_root)
+        .arg(copilot_real_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("txt_user_001"))
+        .stdout(predicate::str::contains("txt_assistant_001"));
+}
+
+#[test]
+fn copilot_real_fixture_head_includes_thread_metadata() {
+    let fixture_root = copilot_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("COPILOT_HOME", fixture_root)
+        .arg(copilot_real_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'thread'"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("type = session.start"))
+        .stdout(predicate::str::contains(
+            "data.context.cwd = /redacted/copilot/project",
+        ))
+        .stdout(predicate::str::contains("data.context.branch = main"));
+}
+
+#[test]
+fn copilot_query_returns_fixture_thread() {
+    let fixture_root = copilot_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("COPILOT_HOME", fixture_root)
+        .arg("agents://copilot?q=txt_assistant_001")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "agents://copilot/688628a1-407a-4b4e-b24a-1a250ebf864f",
+        ))
+        .stdout(predicate::str::contains("Match: `"))
+        .stdout(predicate::str::contains("txt_assistant_001"));
+}
+
+#[test]
+fn copilot_child_uri_is_rejected_until_subagent_support_exists() {
+    let fixture_root = copilot_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("COPILOT_HOME", fixture_root)
+        .arg(format!(
+            "agents://copilot/{COPILOT_REAL_SESSION_ID}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        ))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "provider `copilot` does not support child/subagent drill-down",
+        ))
+        .stderr(predicate::str::contains(
+            "https://github.com/Xuanwo/xurl/issues/new",
+        ));
+}
+
+#[test]
 fn opencode_real_fixture_outputs_markdown() {
     let fixture_root = opencode_real_fixture_root();
     assert!(fixture_root.exists(), "fixture root must exist");
@@ -1754,6 +2044,82 @@ fn opencode_real_fixture_outputs_markdown() {
         .success()
         .stdout(predicate::str::contains("# Thread"))
         .stdout(predicate::str::contains("## 1. User"));
+}
+
+#[test]
+fn cursor_real_fixture_outputs_markdown_without_reasoning() {
+    let fixture_root = cursor_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CURSOR_DATA_DIR", fixture_root)
+        .arg(cursor_real_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains(
+            "hello from sanitized cursor fixture",
+        ))
+        .stdout(predicate::str::contains("Cursor fixture says hello."))
+        .stdout(predicate::str::contains("Internal reasoning should stay hidden").not());
+}
+
+#[test]
+fn cursor_real_fixture_head_includes_thread_metadata() {
+    let fixture_root = cursor_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CURSOR_DATA_DIR", fixture_root)
+        .arg("-I")
+        .arg(cursor_real_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'thread'"))
+        .stdout(predicate::str::contains("thread_metadata:"))
+        .stdout(predicate::str::contains("name = Greeting Agent"))
+        .stdout(predicate::str::contains(
+            "cwd = /tmp/cursor-fixture-project",
+        ));
+}
+
+#[test]
+fn cursor_query_matches_visible_text_but_not_reasoning() {
+    let fixture_root = cursor_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut visible = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    visible
+        .env("CURSOR_DATA_DIR", &fixture_root)
+        .arg("agents://cursor?q=fixture%20says")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "agents://cursor/6ab9d67a-7ad8-4b98-b347-06fa073cffd0",
+        ));
+
+    let mut hidden = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    hidden
+        .env("CURSOR_DATA_DIR", fixture_root)
+        .arg("agents://cursor?q=Internal%20reasoning")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("_No threads found._"));
+}
+
+#[test]
+fn cursor_path_query_uses_workspace_scope() {
+    let fixture_root = cursor_real_fixture_root();
+    assert!(fixture_root.exists(), "fixture root must exist");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CURSOR_DATA_DIR", fixture_root)
+        .arg("agents:///tmp/cursor-fixture-project?providers=cursor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "agents://cursor/6ab9d67a-7ad8-4b98-b347-06fa073cffd0",
+        ));
 }
 
 #[cfg(unix)]
@@ -2197,7 +2563,10 @@ exit 99
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "write mode only supports main thread URIs",
+            "write mode only supports provider or main thread URIs",
+        ))
+        .stderr(predicate::str::contains(
+            "append with `xurl agents://<provider>/<session_id> -d",
         ));
 }
 
@@ -2212,7 +2581,11 @@ fn write_command_not_found_has_hint() {
         .arg("hello")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("hint: write mode needs Codex CLI"));
+        .stderr(predicate::str::contains(
+            "required provider CLI `codex` is not available",
+        ))
+        .stderr(predicate::str::contains("run `codex --version`"))
+        .stderr(predicate::str::contains("install Codex CLI if missing"));
 }
 
 #[cfg(unix)]
@@ -2264,8 +2637,9 @@ exit 99
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "does not support role-based write URI",
-        ));
+            "does not support role-based create in write mode",
+        ))
+        .stderr(predicate::str::contains("xurl agents://amp -d"));
 }
 
 #[cfg(unix)]
@@ -2318,8 +2692,9 @@ exit 99
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "does not support role-based write URI",
-        ));
+            "does not support role-based create in write mode",
+        ))
+        .stderr(predicate::str::contains("xurl agents://gemini -d"));
 }
 
 #[cfg(unix)]
@@ -2371,8 +2746,9 @@ exit 99
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "does not support role-based write URI",
-        ));
+            "does not support role-based create in write mode",
+        ))
+        .stderr(predicate::str::contains("xurl agents://pi -d"));
 }
 
 #[cfg(unix)]
@@ -2501,6 +2877,165 @@ echo '{"type":"assistant","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","m
         .stdout(predicate::str::contains("claude role ok"))
         .stderr(predicate::str::contains(
             "created: agents://claude/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_cursor_create_stream_json_path_works() {
+    let mock = setup_mock_bins(&[(
+        "cursor-agent",
+        r#"
+if [ "$1" = "create-chat" ]; then
+  echo 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  exit 0
+fi
+if [ "$1" = "--resume" ] && [ "$2" = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" ] && [ "$3" = "--print" ] && [ "$4" = "--output-format" ] && [ "$5" = "stream-json" ] && [ "$6" = "--trust" ]; then
+  echo '{"type":"system","subtype":"init","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'
+  echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello from cursor"}]},"session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","timestamp_ms":1}'
+  echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello from cursor"}]},"session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'
+  echo '{"type":"result","subtype":"success","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","result":"hello from cursor"}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://cursor")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from cursor"))
+        .stderr(predicate::str::contains(
+            "created: agents://cursor/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_cursor_append_uses_resume() {
+    let session_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let script = format!(
+        r#"
+if [ "$1" = "--resume" ] && [ "$2" = "{session_id}" ] && [ "$3" = "--print" ] && [ "$4" = "--output-format" ] && [ "$5" = "stream-json" ] && [ "$6" = "--trust" ] && [ "$7" = "continue" ]; then
+  echo '{{"type":"system","subtype":"init","session_id":"{session_id}"}}'
+  echo '{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"cursor append ok"}}]}},"session_id":"{session_id}"}}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    );
+    let mock = setup_mock_bins(&[("cursor-agent", script.as_str())]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg(format!("agents://cursor/{session_id}"))
+        .arg("-d")
+        .arg("continue")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cursor append ok"))
+        .stderr(predicate::str::contains(format!(
+            "updated: agents://cursor/{session_id}",
+        )));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_cursor_role_uri_is_rejected_with_clear_error() {
+    let mock = setup_mock_bins(&[(
+        "cursor-agent",
+        r#"
+echo "should not run" >&2
+exit 99
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://cursor/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "provider `cursor` does not support role-based create in write mode",
+        ))
+        .stderr(predicate::str::contains("xurl agents://cursor -d"));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_copilot_create_stream_json_path_works() {
+    let mock = setup_mock_bins(&[(
+        "copilot",
+        r#"
+if [ "$1" != "-p" ] || [ "$2" != "hello" ] || [ "$3" != "--output-format" ] || [ "$4" != "json" ] || [ "$5" != "--allow-all-tools" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+echo '{"type":"assistant.message_delta","data":{"messageId":"m1","deltaContent":"hello from "}}'
+echo '{"type":"assistant.message_delta","data":{"messageId":"m1","deltaContent":"copilot"}}'
+echo '{"type":"result","timestamp":"2026-03-23T10:12:49.235Z","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","exitCode":0}'
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://copilot")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from copilot"))
+        .stderr(predicate::str::contains(
+            "created: agents://copilot/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_copilot_role_uri_sets_agent_flag() {
+    let mock = setup_mock_bins(&[(
+        "copilot",
+        r#"
+if [ "$1" != "-p" ] || [ "$2" != "hello" ] || [ "$3" != "--output-format" ] || [ "$4" != "json" ] || [ "$5" != "--allow-all-tools" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+seen_agent=0
+shift 5
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --agent)
+      shift
+      [ "$1" = "reviewer" ] || exit 8
+      seen_agent=1
+      ;;
+  esac
+  shift
+done
+[ "$seen_agent" -eq 1 ] || exit 9
+echo '{"type":"assistant.message","data":{"messageId":"m1","content":"copilot role ok","toolRequests":[],"interactionId":"i1","reasoningOpaque":"opaque","reasoningText":"reasoning","encryptedContent":"cipher","phase":"final_answer","outputTokens":2}}'
+echo '{"type":"result","timestamp":"2026-03-23T10:12:49.235Z","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","exitCode":0}'
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://copilot/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("copilot role ok"))
+        .stderr(predicate::str::contains(
+            "created: agents://copilot/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         ));
 }
 

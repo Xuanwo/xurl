@@ -103,10 +103,18 @@ fn extract_timeline_entries(
     if provider == ProviderKind::Amp {
         return Ok(messages_to_entries(extract_amp_messages(path, raw_jsonl)?));
     }
+    if provider == ProviderKind::Copilot {
+        return Ok(messages_to_entries(extract_copilot_messages(
+            path, raw_jsonl,
+        )?));
+    }
     if provider == ProviderKind::Gemini {
         return Ok(messages_to_entries(extract_gemini_messages(
             path, raw_jsonl,
         )?));
+    }
+    if provider == ProviderKind::Kimi {
+        return Ok(messages_to_entries(extract_kimi_messages(raw_jsonl)));
     }
     if provider == ProviderKind::Pi {
         return extract_pi_entries(path, raw_jsonl, session_id, target_entry_id);
@@ -127,9 +135,12 @@ fn extract_timeline_entries(
 
         let extracted = match provider {
             ProviderKind::Amp => None,
+            ProviderKind::Copilot => extract_copilot_entry(&value),
             ProviderKind::Codex => extract_codex_entry(&value),
             ProviderKind::Claude => extract_claude_entry(&value),
+            ProviderKind::Cursor => extract_cursor_message(&value).map(TimelineEntry::Message),
             ProviderKind::Gemini => None,
+            ProviderKind::Kimi => None,
             ProviderKind::Pi => None,
             ProviderKind::Opencode => extract_opencode_message(&value).map(TimelineEntry::Message),
             ProviderKind::Openclaw => extract_openclaw_entry(&value),
@@ -297,6 +308,28 @@ fn extract_amp_messages(path: &Path, raw_json: &str) -> Result<Vec<ThreadMessage
     Ok(messages)
 }
 
+fn extract_copilot_messages(path: &Path, raw_jsonl: &str) -> Result<Vec<ThreadMessage>> {
+    let mut messages = Vec::new();
+
+    for (line_idx, line) in raw_jsonl.lines().enumerate() {
+        let line_no = line_idx + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Some(value) = jsonl::parse_json_line(path, line_no, trimmed)? else {
+            continue;
+        };
+
+        if let Some(message) = extract_copilot_message(&value) {
+            messages.push(message);
+        }
+    }
+
+    Ok(messages)
+}
+
 fn extract_gemini_messages(path: &Path, raw_json: &str) -> Result<Vec<ThreadMessage>> {
     let value =
         serde_json::from_str::<Value>(raw_json).map_err(|source| XurlError::InvalidJsonLine {
@@ -382,6 +415,60 @@ fn extract_codex_message(value: &Value) -> Option<ThreadMessage> {
     }
 
     None
+}
+
+fn extract_copilot_message(value: &Value) -> Option<ThreadMessage> {
+    match value.get("type").and_then(Value::as_str)? {
+        "user.message" => {
+            let text = value
+                .get("data")
+                .and_then(|data| data.get("content"))
+                .and_then(Value::as_str)?;
+            if text.trim().is_empty() {
+                return None;
+            }
+            Some(ThreadMessage {
+                role: MessageRole::User,
+                text: text.to_string(),
+            })
+        }
+        "assistant.message" => {
+            let text = value
+                .get("data")
+                .and_then(|data| data.get("content"))
+                .and_then(Value::as_str)?;
+            if text.trim().is_empty() {
+                return None;
+            }
+            Some(ThreadMessage {
+                role: MessageRole::Assistant,
+                text: text.to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn extract_openclaw_entry(value: &Value) -> Option<TimelineEntry> {
+    if value.get("type").and_then(Value::as_str) != Some("message") {
+        return None;
+    }
+
+    let message = value.get("message")?;
+    let role = message
+        .get("role")
+        .and_then(Value::as_str)
+        .and_then(parse_role)?;
+    let text = extract_text(message.get("content"));
+    if text.trim().is_empty() {
+        return None;
+    }
+
+    Some(TimelineEntry::Message(ThreadMessage { role, text }))
+}
+
+fn extract_cursor_message(value: &Value) -> Option<ThreadMessage> {
+    extract_opencode_message(value)
 }
 
 fn extract_codex_entry(value: &Value) -> Option<TimelineEntry> {
@@ -518,6 +605,10 @@ fn extract_openclaw_entry(value: &Value) -> Option<TimelineEntry> {
     Some(TimelineEntry::Message(ThreadMessage { role, text }))
 }
 
+fn extract_cursor_message(value: &Value) -> Option<ThreadMessage> {
+    extract_opencode_message(value)
+}
+
 fn extract_amp_text(content: Option<&Value>) -> String {
     let Some(items) = content.and_then(Value::as_array) else {
         return String::new();
@@ -614,6 +705,70 @@ fn extract_text(content: Option<&Value>) -> String {
             && !text.trim().is_empty()
         {
             chunks.push(text.trim().to_string());
+        }
+    }
+
+    chunks.join("\n\n")
+}
+
+fn extract_kimi_messages(raw_jsonl: &str) -> Vec<ThreadMessage> {
+    let mut messages = Vec::new();
+
+    for line in raw_jsonl.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+
+        let Some(role) = value
+            .get("role")
+            .and_then(Value::as_str)
+            .and_then(parse_role)
+        else {
+            continue;
+        };
+
+        let text = extract_kimi_text(&value);
+        if text.trim().is_empty() {
+            continue;
+        }
+
+        messages.push(ThreadMessage { role, text });
+    }
+
+    messages
+}
+
+fn extract_kimi_text(value: &Value) -> String {
+    if let Some(text) = value.get("content").and_then(Value::as_str) {
+        if !text.trim().is_empty() {
+            return text.to_string();
+        }
+    }
+
+    let Some(items) = value.get("content").and_then(Value::as_array) else {
+        return String::new();
+    };
+
+    let mut chunks = Vec::new();
+    for item in items {
+        let Some(item_type) = item.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+
+        match item_type {
+            "think" | "text" => {
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    if !text.trim().is_empty() {
+                        chunks.push(text.trim().to_string());
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -811,5 +966,29 @@ mod tests {
         assert!(output.contains("Summary: old conversation"));
         assert!(!output.contains("## 1. User"));
         assert!(output.contains("## 2. Assistant"));
+    }
+
+    #[test]
+    fn kimi_extracts_string_content_messages() {
+        let raw = r#"{"role":"user","content":"hello"}
+{"role":"assistant","content":"world"}"#;
+
+        let messages =
+            extract_messages(ProviderKind::Kimi, Path::new("/tmp/mock"), raw).expect("extract");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].text, "hello");
+        assert_eq!(messages[1].text, "world");
+    }
+
+    #[test]
+    fn kimi_extracts_think_and_text_content_types() {
+        let raw = r#"{"role":"user","content":[{"type":"text","text":"hello"}]}
+{"role":"assistant","content":[{"type":"think","text":"reasoning"},{"type":"tool_call","name":"read_file"},{"type":"text","text":"done"}]}"#;
+
+        let messages =
+            extract_messages(ProviderKind::Kimi, Path::new("/tmp/mock"), raw).expect("extract");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].text, "hello");
+        assert_eq!(messages[1].text, "reasoning\n\ndone");
     }
 }

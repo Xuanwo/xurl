@@ -6,9 +6,12 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ProviderKind {
     Amp,
+    Copilot,
     Codex,
     Claude,
+    Cursor,
     Gemini,
+    Kimi,
     Pi,
     Opencode,
     Openclaw,
@@ -18,9 +21,12 @@ impl fmt::Display for ProviderKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Amp => write!(f, "amp"),
+            Self::Copilot => write!(f, "copilot"),
             Self::Codex => write!(f, "codex"),
             Self::Claude => write!(f, "claude"),
+            Self::Cursor => write!(f, "cursor"),
             Self::Gemini => write!(f, "gemini"),
+            Self::Kimi => write!(f, "kimi"),
             Self::Pi => write!(f, "pi"),
             Self::Opencode => write!(f, "opencode"),
             Self::Openclaw => write!(f, "openclaw"),
@@ -193,17 +199,38 @@ pub struct ThreadQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PathThreadQuery {
+    pub uri: String,
+    pub scope_path: String,
+    pub providers: Option<Vec<ProviderKind>>,
+    pub q: Option<String>,
+    pub limit: usize,
+    pub ignored_params: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ThreadQueryItem {
+    pub provider: ProviderKind,
     pub thread_id: String,
     pub uri: String,
     pub thread_source: String,
     pub updated_at: Option<String>,
     pub matched_preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_metadata: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ThreadQueryResult {
     pub query: ThreadQuery,
+    pub items: Vec<ThreadQueryItem>,
+    #[serde(skip_serializing)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PathThreadQueryResult {
+    pub query: PathThreadQuery,
     pub items: Vec<ThreadQueryItem>,
     #[serde(skip_serializing)]
     pub warnings: Vec<String>,
