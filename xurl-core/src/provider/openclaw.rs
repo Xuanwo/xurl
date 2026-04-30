@@ -617,12 +617,8 @@ mod integration_tests {
     #[test]
     #[ignore]
     fn test_openclaw_cli_version() {
-        let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw --version",
-            ])
+        let output = Command::new("openclaw")
+            .args(["--version"])
             .output()
             .expect("Failed to execute openclaw --version");
 
@@ -641,8 +637,8 @@ mod integration_tests {
     #[test]
     #[ignore]
     fn test_openclaw_agent_help() {
-        let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
-            .args(["-NoProfile", "-Command", "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw agent --help"])
+        let output = Command::new("openclaw")
+            .args(["agent", "--help"])
             .output()
             .expect("Failed to execute openclaw agent --help");
 
@@ -665,8 +661,8 @@ mod integration_tests {
     #[test]
     #[ignore]
     fn test_openclaw_sessions_help() {
-        let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
-            .args(["-NoProfile", "-Command", "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw sessions --help"])
+        let output = Command::new("openclaw")
+            .args(["sessions", "--help"])
             .output()
             .expect("Failed to execute openclaw sessions --help");
 
@@ -691,12 +687,8 @@ mod integration_tests {
     #[test]
     #[ignore]
     fn test_openclaw_status() {
-        let output = Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "`$env:Path = 'C:\\Program Files\\nodejs' + ';' + `$env:Path; openclaw status",
-            ])
+        let output = Command::new("openclaw")
+            .args(["status"])
             .output()
             .expect("Failed to execute openclaw status");
 

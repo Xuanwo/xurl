@@ -514,7 +514,7 @@ pub fn parse_path_query_uri(input: &str) -> Result<Option<PathThreadQuery>> {
 
     Ok(Some(PathThreadQuery {
         uri: canonical_path_query_uri(&scope_path, raw_query),
-        scope_path: scope_path.display().to_string(),
+        scope_path: scope_path.display().to_string().replace('\\', "/"),
         providers: params.providers,
         q: params.q,
         limit: params.limit,
@@ -523,7 +523,8 @@ pub fn parse_path_query_uri(input: &str) -> Result<Option<PathThreadQuery>> {
 }
 
 fn canonical_path_query_uri(scope_path: &Path, raw_query: &str) -> String {
-    let mut uri = format!("agents://{}", scope_path.display());
+    let normalized = scope_path.to_string_lossy().replace('\\', "/");
+    let mut uri = format!("agents://{normalized}");
     if !raw_query.is_empty() {
         uri.push('?');
         uri.push_str(raw_query);

@@ -449,6 +449,10 @@ fn extract_copilot_message(value: &Value) -> Option<ThreadMessage> {
     }
 }
 
+fn extract_copilot_entry(_value: &Value) -> Option<TimelineEntry> {
+    None
+}
+
 fn extract_openclaw_entry(value: &Value) -> Option<TimelineEntry> {
     if value.get("type").and_then(Value::as_str) != Some("message") {
         return None;
@@ -585,28 +589,6 @@ fn extract_opencode_message(value: &Value) -> Option<ThreadMessage> {
         role,
         text: chunks.join("\n\n"),
     })
-}
-
-fn extract_openclaw_entry(value: &Value) -> Option<TimelineEntry> {
-    if value.get("type").and_then(Value::as_str) != Some("message") {
-        return None;
-    }
-
-    let message = value.get("message")?;
-    let role = message
-        .get("role")
-        .and_then(Value::as_str)
-        .and_then(parse_role)?;
-    let text = extract_text(message.get("content"));
-    if text.trim().is_empty() {
-        return None;
-    }
-
-    Some(TimelineEntry::Message(ThreadMessage { role, text }))
-}
-
-fn extract_cursor_message(value: &Value) -> Option<ThreadMessage> {
-    extract_opencode_message(value)
 }
 
 fn extract_amp_text(content: Option<&Value>) -> String {

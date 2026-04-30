@@ -5,7 +5,7 @@ use std::{env, os::unix::fs::PermissionsExt};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use tempfile::tempdir;
 
 const SESSION_ID: &str = "019c871c-b1f9-7f60-9c4f-87ed09f13592";
@@ -1086,8 +1086,6 @@ fn codex_path_query_outputs_markdown() {
             "agents://codex/{SESSION_ID}"
         )))
         .stdout(predicate::str::contains("- Provider: `codex`"));
-}
-
 }
 
 #[test]

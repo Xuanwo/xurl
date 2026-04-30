@@ -990,6 +990,7 @@ fn collect_thread_metadata(provider: ProviderKind, path: &Path) -> (Vec<String>,
         ProviderKind::Kimi => (Vec::new(), Vec::new()),
         ProviderKind::Pi => collect_pi_thread_metadata(path, &raw),
         ProviderKind::Opencode => collect_opencode_thread_metadata(path, &raw),
+        ProviderKind::Openclaw => (Vec::new(), Vec::new()),
     }
 }
 
@@ -1041,7 +1042,8 @@ fn collect_query_thread_metadata(provider: ProviderKind, path: &Path) -> Option<
         | ProviderKind::Copilot
         | ProviderKind::Gemini
         | ProviderKind::Kimi
-        | ProviderKind::Opencode => collect_thread_metadata(provider, path).0,
+        | ProviderKind::Opencode
+        | ProviderKind::Openclaw => collect_thread_metadata(provider, path).0,
     };
 
     if metadata.is_empty() {
@@ -1636,6 +1638,7 @@ fn collect_candidates_for_provider(
         ProviderKind::Opencode => {
             collect_opencode_query_candidates(roots, warnings, with_search_text)
         }
+        ProviderKind::Openclaw => collect_openclaw_query_candidates(roots, warnings, with_search_text),
     }
 }
 
@@ -5475,6 +5478,7 @@ fn collect_openclaw_query_candidates(
                 None
             }
         },
+        |_| None,
         warnings,
     ));
     candidates.extend(collect_simple_file_candidates(
@@ -5493,6 +5497,7 @@ fn collect_openclaw_query_candidates(
                 None
             }
         },
+        |_| None,
         warnings,
     ));
 
