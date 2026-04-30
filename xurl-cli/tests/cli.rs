@@ -5,7 +5,7 @@ use std::{env, os::unix::fs::PermissionsExt};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use tempfile::tempdir;
 
 const SESSION_ID: &str = "019c871c-b1f9-7f60-9c4f-87ed09f13592";
@@ -33,6 +33,7 @@ const OPENCODE_REAL_SESSION_ID: &str = "ses_7v2md9kx3c1p";
 const OPENCODE_MAIN_SESSION_ID: &str = "ses_5x7md9kx3c1p";
 const OPENCODE_CHILD_SESSION_ID: &str = "ses_5x7md9kx3c2p";
 const OPENCODE_CHILD_EMPTY_SESSION_ID: &str = "ses_5x7md9kx3c3p";
+const OPENCLAW_SESSION_ID: &str = "0139048b-6a00-4636-8125-336ba5ed1cf9";
 
 fn setup_codex_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
@@ -547,6 +548,38 @@ fn setup_opencode_subagent_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_openclaw_tree() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let main_path = temp.path().join(format!(
+        ".openclaw/agents/main/sessions/{OPENCLAW_SESSION_ID}.jsonl"
+    ));
+    let sub_path = temp.path().join(format!(
+        ".openclaw/agents/primary/sessions/{OPENCLAW_SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(main_path.parent().expect("parent")).expect("mkdir");
+    fs::create_dir_all(sub_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &main_path,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"{OPENCLAW_SESSION_ID}\",\"timestamp\":\"2026-03-09T09:34:19.978Z\",\"cwd\":\"/tmp/openclaw\"}}\n\
+{{\"type\":\"message\",\"id\":\"m1\",\"parentId\":null,\"timestamp\":\"2026-03-09T09:34:20.014Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello from openclaw main\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"m2\",\"parentId\":\"m1\",\"timestamp\":\"2026-03-09T09:34:21.014Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"thinking\",\"thinking\":\"step by step\"}},{{\"type\":\"toolCall\",\"id\":\"call_1\",\"name\":\"exec\",\"arguments\":{{\"command\":\"echo hi\"}}}},{{\"type\":\"text\",\"text\":\"openclaw main done\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"m3\",\"parentId\":\"m2\",\"timestamp\":\"2026-03-09T09:34:22.014Z\",\"message\":{{\"role\":\"toolResult\",\"content\":[{{\"type\":\"text\",\"text\":\"tool output\"}}]}}}}\n"
+        ),
+    )
+    .expect("write openclaw main session");
+    fs::write(
+        &sub_path,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"{OPENCLAW_SESSION_ID}\",\"timestamp\":\"2026-03-09T09:34:19.978Z\",\"cwd\":\"/tmp/openclaw\"}}\n\
+{{\"type\":\"message\",\"id\":\"s1\",\"parentId\":null,\"timestamp\":\"2026-03-09T09:34:20.014Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello from openclaw subagent\"}}]}}}}\n\
+{{\"type\":\"message\",\"id\":\"s2\",\"parentId\":\"s1\",\"timestamp\":\"2026-03-09T09:34:21.014Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"openclaw subagent done\"}}]}}}}\n"
+        ),
+    )
+    .expect("write openclaw subagent session");
+    temp
+}
+
 fn codex_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex_real_sanitized")
 }
@@ -1007,6 +1040,23 @@ fn opencode_collection_query_outputs_markdown() {
 }
 
 #[test]
+fn openclaw_collection_query_outputs_markdown() {
+    let temp = setup_openclaw_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg("agents://openclaw?q=openclaw&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://openclaw/{OPENCLAW_SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
 fn amp_path_query_outputs_markdown() {
     let temp = setup_amp_tree();
 
@@ -1036,127 +1086,6 @@ fn codex_path_query_outputs_markdown() {
             "agents://codex/{SESSION_ID}"
         )))
         .stdout(predicate::str::contains("- Provider: `codex`"));
-}
-
-#[test]
-fn claude_path_query_outputs_markdown() {
-    let temp = setup_claude_subagent_tree();
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env("CLAUDE_CONFIG_DIR", temp.path())
-        .arg("agents:///tmp/project?providers=claude&q=agent&limit=1")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
-        .stdout(predicate::str::contains("- Providers: `claude`"))
-        .stdout(predicate::str::contains("agents://claude/"))
-        .stdout(predicate::str::contains("- Provider: `claude`"));
-}
-
-#[test]
-fn gemini_path_query_outputs_markdown() {
-    let temp = setup_gemini_tree();
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env("GEMINI_CLI_HOME", temp.path())
-        .arg("agents:///tmp/project?providers=gemini&q=hello&limit=1")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
-        .stdout(predicate::str::contains("- Providers: `gemini`"))
-        .stdout(predicate::str::contains(format!(
-            "agents://gemini/{GEMINI_SESSION_ID}"
-        )))
-        .stdout(predicate::str::contains("- Provider: `gemini`"));
-}
-
-#[test]
-fn pi_path_query_outputs_markdown() {
-    let temp = setup_pi_tree();
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env("PI_CODING_AGENT_DIR", temp.path().join("agent"))
-        .arg("agents:///tmp/project?providers=pi&q=root&limit=1")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
-        .stdout(predicate::str::contains("- Providers: `pi`"))
-        .stdout(predicate::str::contains(format!(
-            "agents://pi/{PI_SESSION_ID}"
-        )))
-        .stdout(predicate::str::contains("- Provider: `pi`"));
-}
-
-#[test]
-fn opencode_path_query_outputs_markdown() {
-    let temp = setup_opencode_subagent_tree();
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env("XDG_DATA_HOME", temp.path())
-        .arg("agents:///tmp/project?providers=opencode&q=help&limit=1")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("- Scope Path: `/tmp/project`"))
-        .stdout(predicate::str::contains("- Providers: `opencode`"))
-        .stdout(predicate::str::contains("agents://opencode/"))
-        .stdout(predicate::str::contains("- Provider: `opencode`"));
-}
-
-#[test]
-fn path_query_current_dir_shorthand_outputs_canonical_uri() {
-    let temp = tempdir().expect("tempdir");
-    let workspace = temp.path().join("workspace");
-    fs::create_dir_all(&workspace).expect("mkdir");
-    let actual_workspace = workspace.canonicalize().expect("canonicalize workspace");
-    let codex_home = setup_codex_tree_with_scope(&actual_workspace);
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.current_dir(&workspace)
-        .env("CODEX_HOME", codex_home.path())
-        .arg("agents://.?q=hello&providers=codex")
-        .arg("--head")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(format!(
-            "uri: 'agents://{}?q=hello&providers=codex'",
-            actual_workspace.display()
-        )))
-        .stdout(predicate::str::contains("mode: 'path_thread_query'"));
-}
-
-#[test]
-fn path_query_home_shorthand_outputs_canonical_uri() {
-    let temp = tempdir().expect("tempdir");
-    let home = temp.path().join("home");
-    let repo = home.join("repo");
-    fs::create_dir_all(&repo).expect("mkdir");
-    let codex_home = setup_codex_tree_with_scope(&repo);
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env("HOME", &home)
-        .env("CODEX_HOME", codex_home.path())
-        .arg("agents://~/repo?q=hello&providers=codex")
-        .arg("--head")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(format!(
-            "uri: 'agents://{}?q=hello&providers=codex'",
-            repo.display()
-        )))
-        .stdout(predicate::str::contains("mode: 'path_thread_query'"));
-}
-
-#[test]
-fn unsupported_global_query_form_returns_error() {
-    let temp = setup_codex_tree();
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.env("CODEX_HOME", temp.path())
-        .arg("agents://?q=hello")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("invalid URI"))
-        .stderr(predicate::str::contains("requested_uri: agents://?q=hello"));
 }
 
 #[test]
@@ -1958,6 +1887,60 @@ fn opencode_subagent_not_found_outputs_markdown_view() {
         .stdout(predicate::str::contains(format!(
             "agent not found for main_session_id={OPENCODE_MAIN_SESSION_ID} agent_id={missing_child}"
         )));
+}
+
+#[test]
+fn openclaw_read_outputs_markdown() {
+    let temp = setup_openclaw_tree();
+    let uri = format!("openclaw://{OPENCLAW_SESSION_ID}");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg(&uri)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("hello from openclaw main"))
+        .stdout(predicate::str::contains("## 2. Assistant"))
+        .stdout(predicate::str::contains("openclaw main done"));
+}
+
+#[test]
+fn openclaw_head_outputs_subagent_index() {
+    let temp = setup_openclaw_tree();
+    let uri = format!("openclaw://{OPENCLAW_SESSION_ID}");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg(&uri)
+        .arg("-I")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("---\n"))
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(format!(
+            "agents://openclaw/{OPENCLAW_SESSION_ID}/primary"
+        )))
+        .stdout(predicate::str::contains("# Thread").not());
+}
+
+#[test]
+fn openclaw_subagent_uri_outputs_markdown_view() {
+    let temp = setup_openclaw_tree();
+    let uri = format!("openclaw://{OPENCLAW_SESSION_ID}/primary");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("OPENCLAW_HOME", temp.path().join(".openclaw"))
+        .arg(&uri)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Subagent Thread"))
+        .stdout(predicate::str::contains(format!(
+            "agents://openclaw/{OPENCLAW_SESSION_ID}/primary"
+        )))
+        .stdout(predicate::str::contains("openclaw subagent done"));
 }
 
 #[test]

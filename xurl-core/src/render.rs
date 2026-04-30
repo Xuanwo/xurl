@@ -143,6 +143,7 @@ fn extract_timeline_entries(
             ProviderKind::Kimi => None,
             ProviderKind::Pi => None,
             ProviderKind::Opencode => extract_opencode_message(&value).map(TimelineEntry::Message),
+            ProviderKind::Openclaw => extract_openclaw_entry(&value),
         };
 
         if let Some(entry) = extracted {
@@ -448,8 +449,30 @@ fn extract_copilot_message(value: &Value) -> Option<ThreadMessage> {
     }
 }
 
-fn extract_copilot_entry(value: &Value) -> Option<TimelineEntry> {
-    extract_copilot_message(value).map(TimelineEntry::Message)
+fn extract_copilot_entry(_value: &Value) -> Option<TimelineEntry> {
+    None
+}
+
+fn extract_openclaw_entry(value: &Value) -> Option<TimelineEntry> {
+    if value.get("type").and_then(Value::as_str) != Some("message") {
+        return None;
+    }
+
+    let message = value.get("message")?;
+    let role = message
+        .get("role")
+        .and_then(Value::as_str)
+        .and_then(parse_role)?;
+    let text = extract_text(message.get("content"));
+    if text.trim().is_empty() {
+        return None;
+    }
+
+    Some(TimelineEntry::Message(ThreadMessage { role, text }))
+}
+
+fn extract_cursor_message(value: &Value) -> Option<ThreadMessage> {
+    extract_opencode_message(value)
 }
 
 fn extract_codex_entry(value: &Value) -> Option<TimelineEntry> {
@@ -566,10 +589,6 @@ fn extract_opencode_message(value: &Value) -> Option<ThreadMessage> {
         role,
         text: chunks.join("\n\n"),
     })
-}
-
-fn extract_cursor_message(value: &Value) -> Option<ThreadMessage> {
-    extract_opencode_message(value)
 }
 
 fn extract_amp_text(content: Option<&Value>) -> String {
@@ -794,6 +813,20 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].text, "hello");
         assert_eq!(messages[1].text, "thinking\n\nworld");
+    }
+
+    #[test]
+    fn openclaw_extracts_message_content_text() {
+        let raw = r#"{"type":"session","version":3,"id":"0139048b-6a00-4636-8125-336ba5ed1cf9"}
+{"type":"message","id":"m1","parentId":null,"timestamp":"2026-03-09T09:34:20.014Z","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-03-09T09:34:21.014Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"step by step"},{"type":"toolCall","id":"call_1","name":"exec","arguments":{"command":"echo hi"}},{"type":"text","text":"world"}]}}
+{"type":"message","id":"m3","parentId":"m2","timestamp":"2026-03-09T09:34:22.014Z","message":{"role":"toolResult","content":[{"type":"text","text":"tool output"}]}}"#;
+
+        let messages =
+            extract_messages(ProviderKind::Openclaw, Path::new("/tmp/mock"), raw).expect("extract");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].text, "hello");
+        assert_eq!(messages[1].text, "world");
     }
 
     #[test]

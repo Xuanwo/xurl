@@ -13,6 +13,7 @@ pub mod copilot;
 pub mod cursor;
 pub mod gemini;
 pub mod kimi;
+pub mod openclaw;
 pub mod opencode;
 pub mod pi;
 
@@ -66,6 +67,7 @@ pub struct ProviderRoots {
     pub kimi_root: PathBuf,
     pub pi_root: PathBuf,
     pub opencode_root: PathBuf,
+    pub openclaw_root: PathBuf,
 }
 
 impl ProviderRoots {
@@ -146,6 +148,14 @@ impl ProviderRoots {
             .map(|path| path.join("opencode"))
             .unwrap_or_else(|| home.join(".local/share/opencode"));
 
+        // Precedence:
+        // 1) OPENCLAW_HOME
+        // 2) ~/.openclaw
+        let openclaw_root = env::var_os("OPENCLAW_HOME")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".openclaw"));
+
         Ok(Self {
             amp_root,
             copilot_root,
@@ -156,6 +166,7 @@ impl ProviderRoots {
             kimi_root,
             pi_root,
             opencode_root,
+            openclaw_root,
         })
     }
 }

@@ -27,6 +27,7 @@ xURL gives you one URI scheme (`agents://`) to **read**, **query**, **discover**
     <td align="center"><img src="https://cdn.simpleicons.org/googlegemini" alt="Gemini" width="36" height="36" /><br /><code>agents://gemini</code></td>
     <td align="center"><img src="https://avatars.githubusercontent.com/u/129152888?s=200&v=4" alt="Kimi" width="36" height="36" /><br /><code>agents://kimi</code></td>
     <td align="center"><img src="https://avatars.githubusercontent.com/u/208539476?s=200&v=4" alt="OpenCode" width="36" height="36" /><br /><code>agents://opencode</code></td>
+    <td align="center"><img src="https://openclaw.ai/favicon.svg" alt="OpenClaw" width="36" height="36" /><br /><code>agents://openclaw</code></td>
     <td align="center"><img src=".github/assets/pi-logo-dark.svg" alt="Pi" width="36" height="36" /><br /><code>agents://pi</code></td>
   </tr>
 </table>
@@ -56,6 +57,7 @@ Ask your agent to summarize a thread:
 Please summarize this thread: agents://codex/xxx_thread
 ```
 
+<<
 ## Usage
 
 > **Note:** The `agents://` scheme prefix is optional — `codex/...` is equivalent to `agents://codex/...`.
@@ -175,7 +177,7 @@ xurl [OPTIONS] <URI>
 ```
 
 - `scheme`: optional `agents://` prefix. If omitted, `xurl` treats input as an `agents` URI shorthand.
-- `provider`: target provider name, such as `amp`, `claude`, `codex`, `copilot`, `cursor`, `gemini`, `kimi`, `opencode`, `pi`.
+- `provider`: target provider name, such as `amp`, `claude`, `codex`, `copilot`, `cursor`, `gemini`, `kimi`, `opencode`, `openclaw`, `pi`.
 - `token`: main conversation identifier or role name.
 - `child_id`: child/subagent identifier under a main conversation.
 - `query`: optional key-value parameters, interpreted by context.

@@ -136,7 +136,8 @@ fn parse_legacy_target<'a>(scheme: &str, target: &'a str, input: &str) -> Result
         | ProviderKind::Gemini
         | ProviderKind::Kimi
         | ProviderKind::Pi
-        | ProviderKind::Opencode => target,
+        | ProviderKind::Opencode
+        | ProviderKind::Openclaw => target,
     };
     let mut segments = normalized_target.split('/');
     let main_id = segments.next().unwrap_or_default();
@@ -193,6 +194,7 @@ impl FromStr for AgentsUri {
             | ProviderKind::Gemini
             | ProviderKind::Kimi
             | ProviderKind::Pi
+            | ProviderKind::Openclaw
                 if !is_uuid_session_id(raw_id) =>
             {
                 return Err(XurlError::InvalidSessionId(raw_id.to_string()));
@@ -218,7 +220,8 @@ impl FromStr for AgentsUri {
             | ProviderKind::Cursor
             | ProviderKind::Gemini
             | ProviderKind::Kimi
-            | ProviderKind::Pi => raw_id.to_ascii_lowercase(),
+            | ProviderKind::Pi
+            | ProviderKind::Openclaw => raw_id.to_ascii_lowercase(),
             ProviderKind::Opencode => raw_id.to_string(),
         };
 
@@ -344,6 +347,7 @@ fn parse_provider(scheme: &str) -> Result<ProviderKind> {
         "kimi" => Ok(ProviderKind::Kimi),
         "pi" => Ok(ProviderKind::Pi),
         "opencode" => Ok(ProviderKind::Opencode),
+        "openclaw" => Ok(ProviderKind::Openclaw),
         _ => Err(XurlError::UnsupportedScheme(scheme.to_string())),
     }
 }
@@ -357,7 +361,8 @@ fn looks_like_session_id(provider: ProviderKind, token: &str) -> bool {
         | ProviderKind::Cursor
         | ProviderKind::Gemini
         | ProviderKind::Kimi
-        | ProviderKind::Pi => is_uuid_session_id(token),
+        | ProviderKind::Pi
+        | ProviderKind::Openclaw => is_uuid_session_id(token),
         ProviderKind::Opencode => OPENCODE_SESSION_ID_RE.is_match(token),
     }
 }
@@ -509,7 +514,7 @@ pub fn parse_path_query_uri(input: &str) -> Result<Option<PathThreadQuery>> {
 
     Ok(Some(PathThreadQuery {
         uri: canonical_path_query_uri(&scope_path, raw_query),
-        scope_path: scope_path.display().to_string(),
+        scope_path: scope_path.display().to_string().replace('\\', "/"),
         providers: params.providers,
         q: params.q,
         limit: params.limit,
@@ -518,7 +523,8 @@ pub fn parse_path_query_uri(input: &str) -> Result<Option<PathThreadQuery>> {
 }
 
 fn canonical_path_query_uri(scope_path: &Path, raw_query: &str) -> String {
-    let mut uri = format!("agents://{}", scope_path.display());
+    let normalized = scope_path.to_string_lossy().replace('\\', "/");
+    let mut uri = format!("agents://{normalized}");
     if !raw_query.is_empty() {
         uri.push('?');
         uri.push_str(raw_query);
@@ -943,6 +949,22 @@ mod tests {
         assert_eq!(uri.provider, ProviderKind::Opencode);
         assert_eq!(uri.session_id, "ses_43a90e3adffejRgrTdlJa48CtE");
         assert_eq!(uri.agent_id, None);
+    }
+
+    #[test]
+    fn parse_valid_openclaw_uri() {
+        let uri = AgentsUri::parse("openclaw://0139048B-6A00-4636-8125-336BA5ED1CF9")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Openclaw);
+        assert_eq!(uri.session_id, "0139048b-6a00-4636-8125-336ba5ed1cf9");
+        assert_eq!(uri.agent_id, None);
+    }
+
+    #[test]
+    fn parse_rejects_invalid_session_id_for_openclaw() {
+        let err = AgentsUri::parse("openclaw://ses_43a90e3adffejRgrTdlJa48CtE")
+            .expect_err("must reject non-uuid session id");
+        assert!(format!("{err}").contains("invalid session id"));
     }
 
     #[test]

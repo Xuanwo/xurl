@@ -28,6 +28,7 @@ use crate::provider::copilot::CopilotProvider;
 use crate::provider::cursor::CursorProvider;
 use crate::provider::gemini::GeminiProvider;
 use crate::provider::kimi::KimiProvider;
+use crate::provider::openclaw::OpenClawProvider;
 use crate::provider::opencode::OpencodeProvider;
 use crate::provider::pi::PiProvider;
 use crate::provider::{Provider, ProviderRoots, WriteEventSink};
@@ -152,6 +153,17 @@ struct OpencodeChildAnalysis {
     warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct OpenClawAgentRecord {
+    agent_id: String,
+    path: PathBuf,
+    status: String,
+    status_source: String,
+    last_update: Option<String>,
+    relation: SubagentRelation,
+    excerpt: Vec<SubagentExcerptMessage>,
+}
+
 impl Default for PiDiscoveredChild {
     fn default() -> Self {
         Self {
@@ -178,6 +190,7 @@ pub fn resolve_thread(uri: &AgentsUri, roots: &ProviderRoots) -> Result<Resolved
         ProviderKind::Kimi => KimiProvider::new(&roots.kimi_root).resolve(session_id),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).resolve(session_id),
         ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).resolve(session_id),
+        ProviderKind::Openclaw => OpenClawProvider::new(&roots.openclaw_root).resolve(session_id),
     }
 }
 
@@ -197,6 +210,7 @@ pub fn write_thread(
         ProviderKind::Kimi => Err(XurlError::UnsupportedProviderWrite("kimi".to_string())),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).write(req, sink),
         ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).write(req, sink),
+        ProviderKind::Openclaw => OpenClawProvider::new(&roots.openclaw_root).write(req, sink),
     }
 }
 
@@ -243,6 +257,15 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
         ProviderKind::Kimi => collect_kimi_query_candidates(roots, &mut warnings),
         ProviderKind::Pi => collect_pi_query_candidates(roots, &mut warnings),
         ProviderKind::Opencode => collect_opencode_query_candidates(
+            roots,
+            &mut warnings,
+            query.q.as_deref().is_some_and(|q| !q.trim().is_empty())
+                || query
+                    .role
+                    .as_deref()
+                    .is_some_and(|role| !role.trim().is_empty()),
+        )?,
+        ProviderKind::Openclaw => collect_openclaw_query_candidates(
             roots,
             &mut warnings,
             query.q.as_deref().is_some_and(|q| !q.trim().is_empty())
@@ -644,6 +667,7 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
             | ProviderKind::Codex
             | ProviderKind::Claude
             | ProviderKind::Gemini
+            | ProviderKind::Openclaw
             | ProviderKind::Opencode,
             None,
         ) => {
@@ -717,6 +741,7 @@ pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Re
             | ProviderKind::Cursor
             | ProviderKind::Gemini
             | ProviderKind::Kimi
+            | ProviderKind::Openclaw
             | ProviderKind::Opencode,
             Some(_),
         ) => {
@@ -869,6 +894,7 @@ pub fn resolve_subagent_view(
         })),
         ProviderKind::Pi => resolve_pi_subagent_view(uri, roots, list),
         ProviderKind::Opencode => resolve_opencode_subagent_view(uri, roots, list),
+        ProviderKind::Openclaw => resolve_openclaw_subagent_view(uri, roots, list),
     }
 }
 
@@ -964,6 +990,7 @@ fn collect_thread_metadata(provider: ProviderKind, path: &Path) -> (Vec<String>,
         ProviderKind::Kimi => (Vec::new(), Vec::new()),
         ProviderKind::Pi => collect_pi_thread_metadata(path, &raw),
         ProviderKind::Opencode => collect_opencode_thread_metadata(path, &raw),
+        ProviderKind::Openclaw => (Vec::new(), Vec::new()),
     }
 }
 
@@ -1015,7 +1042,8 @@ fn collect_query_thread_metadata(provider: ProviderKind, path: &Path) -> Option<
         | ProviderKind::Copilot
         | ProviderKind::Gemini
         | ProviderKind::Kimi
-        | ProviderKind::Opencode => collect_thread_metadata(provider, path).0,
+        | ProviderKind::Opencode
+        | ProviderKind::Openclaw => collect_thread_metadata(provider, path).0,
     };
 
     if metadata.is_empty() {
@@ -1610,6 +1638,7 @@ fn collect_candidates_for_provider(
         ProviderKind::Opencode => {
             collect_opencode_query_candidates(roots, warnings, with_search_text)
         }
+        ProviderKind::Openclaw => collect_openclaw_query_candidates(roots, warnings, with_search_text),
     }
 }
 
@@ -4192,6 +4221,249 @@ fn resolve_opencode_subagent_view(
     }))
 }
 
+fn resolve_openclaw_subagent_view(
+    uri: &AgentsUri,
+    roots: &ProviderRoots,
+    list: bool,
+) -> Result<SubagentView> {
+    let main_uri = main_thread_uri(uri);
+    let resolved_main = resolve_thread(&main_uri, roots)?;
+
+    let mut warnings = resolved_main.metadata.warnings.clone();
+    let main_agent = openclaw_agent_id_from_path(&roots.openclaw_root, &resolved_main.path);
+
+    if list {
+        let records = discover_openclaw_agents(
+            roots,
+            &uri.session_id,
+            &mut warnings,
+            main_agent.as_deref(),
+        );
+        let agents = records
+            .into_iter()
+            .map(|record| SubagentListItem {
+                agent_id: record.agent_id.clone(),
+                status: record.status,
+                status_source: record.status_source,
+                last_update: record.last_update.clone(),
+                relation: record.relation,
+                child_thread: Some(SubagentThreadRef {
+                    thread_id: record.agent_id.clone(),
+                    path: Some(record.path.display().to_string()),
+                    last_updated_at: record.last_update,
+                }),
+            })
+            .collect();
+
+        return Ok(SubagentView::List(SubagentListView {
+            query: make_query(uri, None, true),
+            agents,
+            warnings,
+        }));
+    }
+
+    let requested_agent = uri
+        .agent_id
+        .clone()
+        .ok_or_else(|| XurlError::InvalidMode("missing agent id".to_string()))?;
+
+    let records = discover_openclaw_agents(roots, &uri.session_id, &mut warnings, None);
+    if let Some(record) = records
+        .into_iter()
+        .find(|record| record.agent_id.eq_ignore_ascii_case(&requested_agent))
+    {
+        let lifecycle = vec![SubagentLifecycleEvent {
+            timestamp: record.last_update.clone(),
+            event: "discovered_agent_session".to_string(),
+            detail: format!("agent session found under agents/{}/sessions", record.agent_id),
+        }];
+
+        return Ok(SubagentView::Detail(SubagentDetailView {
+            query: make_query(uri, Some(requested_agent), false),
+            relation: record.relation,
+            lifecycle,
+            status: record.status,
+            status_source: record.status_source,
+            child_thread: Some(SubagentThreadRef {
+                thread_id: record.agent_id.clone(),
+                path: Some(record.path.display().to_string()),
+                last_updated_at: record.last_update.clone(),
+            }),
+            excerpt: record.excerpt,
+            warnings,
+        }));
+    }
+
+    warnings.push(format!(
+        "agent not found for main_session_id={} agent_id={requested_agent}",
+        uri.session_id
+    ));
+
+    Ok(SubagentView::Detail(SubagentDetailView {
+        query: make_query(uri, Some(requested_agent), false),
+        relation: SubagentRelation::default(),
+        lifecycle: Vec::new(),
+        status: STATUS_NOT_FOUND.to_string(),
+        status_source: "inferred".to_string(),
+        child_thread: None,
+        excerpt: Vec::new(),
+        warnings,
+    }))
+}
+
+fn openclaw_agent_id_from_path(root: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(root).ok()?;
+    let mut components = relative.components();
+    let agents = components.next()?;
+    if agents.as_os_str().to_string_lossy() != "agents" {
+        return None;
+    }
+    let agent = components.next()?;
+    let sessions = components.next()?;
+    if sessions.as_os_str().to_string_lossy() != "sessions" {
+        return None;
+    }
+    Some(agent.as_os_str().to_string_lossy().to_string())
+}
+
+fn find_openclaw_session_file(sessions_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let candidate = sessions_dir.join(format!("{session_id}.jsonl"));
+    if candidate.exists() {
+        return Some(candidate);
+    }
+
+    let entries = fs::read_dir(sessions_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(ext) = path.extension().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !ext.eq_ignore_ascii_case("jsonl") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if stem.eq_ignore_ascii_case(session_id) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn discover_openclaw_agents(
+    roots: &ProviderRoots,
+    session_id: &str,
+    warnings: &mut Vec<String>,
+    exclude_agent: Option<&str>,
+) -> Vec<OpenClawAgentRecord> {
+    let agents_root = roots.openclaw_root.join("agents");
+    if !agents_root.exists() {
+        return Vec::new();
+    }
+
+    let mut records = Vec::new();
+    let entries = match fs::read_dir(&agents_root) {
+        Ok(entries) => entries,
+        Err(err) => {
+            warnings.push(format!(
+                "failed to read openclaw agents directory {}: {err}",
+                agents_root.display()
+            ));
+            return Vec::new();
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let agent_id = entry.file_name().to_string_lossy().to_string();
+        if let Some(exclude) = exclude_agent
+            && agent_id.eq_ignore_ascii_case(exclude)
+        {
+            continue;
+        }
+        let sessions_dir = path.join("sessions");
+        let Some(session_path) = find_openclaw_session_file(&sessions_dir, session_id) else {
+            continue;
+        };
+        if let Some(record) = analyze_openclaw_agent_file(&agent_id, &session_path, warnings) {
+            records.push(record);
+        }
+    }
+
+    records
+}
+
+fn analyze_openclaw_agent_file(
+    agent_id: &str,
+    path: &Path,
+    warnings: &mut Vec<String>,
+) -> Option<OpenClawAgentRecord> {
+    let raw = match read_thread_raw(path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            warnings.push(format!(
+                "failed reading openclaw agent session {}: {err}",
+                path.display()
+            ));
+            return None;
+        }
+    };
+
+    let messages = match render::extract_messages(ProviderKind::Openclaw, path, &raw) {
+        Ok(messages) => messages,
+        Err(err) => {
+            warnings.push(format!(
+                "failed extracting openclaw messages from {}: {err}",
+                path.display()
+            ));
+            Vec::new()
+        }
+    };
+
+    let status = match messages.last().map(|message| message.role) {
+        Some(MessageRole::Assistant) => STATUS_COMPLETED.to_string(),
+        Some(MessageRole::User) => STATUS_RUNNING.to_string(),
+        None => STATUS_PENDING_INIT.to_string(),
+    };
+
+    let excerpt = messages
+        .into_iter()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|message| SubagentExcerptMessage {
+            role: message.role,
+            text: message.text,
+        })
+        .collect::<Vec<_>>();
+
+    let last_update = extract_last_timestamp(&raw).or_else(|| modified_timestamp_string(path));
+
+    let mut relation = SubagentRelation::default();
+    relation.evidence.push(format!(
+        "agent session file found under agents/{agent_id}/sessions"
+    ));
+
+    Some(OpenClawAgentRecord {
+        agent_id: agent_id.to_string(),
+        path: path.to_path_buf(),
+        status,
+        status_source: "inferred".to_string(),
+        last_update,
+        relation,
+        excerpt,
+    })
+}
+
 fn discover_opencode_agents(
     roots: &ProviderRoots,
     main_session_id: &str,
@@ -5177,6 +5449,74 @@ fn collect_opencode_query_candidates(
     }
 
     Ok(candidates)
+}
+
+fn collect_openclaw_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+    _with_search_text: bool,
+) -> Result<Vec<QueryCandidate>> {
+    let mut candidates = Vec::new();
+    candidates.extend(collect_simple_file_candidates(
+        ProviderKind::Openclaw,
+        &roots.openclaw_root.join("agents"),
+        |path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext == "jsonl")
+                && path
+                    .parent()
+                    .and_then(|parent| parent.file_name())
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name == "sessions")
+        },
+        |path| {
+            let session_id = path.file_stem()?.to_str()?;
+            if is_uuid_session_id(session_id) {
+                Some(session_id.to_ascii_lowercase())
+            } else {
+                None
+            }
+        },
+        |_| None,
+        warnings,
+    ));
+    candidates.extend(collect_simple_file_candidates(
+        ProviderKind::Openclaw,
+        &roots.openclaw_root.join("data/sessions"),
+        |path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext == "json")
+        },
+        |path| {
+            let session_id = path.file_stem()?.to_str()?;
+            if is_uuid_session_id(session_id) {
+                Some(session_id.to_ascii_lowercase())
+            } else {
+                None
+            }
+        },
+        |_| None,
+        warnings,
+    ));
+
+    let mut by_id = HashMap::<String, QueryCandidate>::new();
+    for candidate in candidates {
+        let candidate_epoch = candidate.updated_epoch.unwrap_or(0);
+        match by_id.get_mut(&candidate.thread_id) {
+            Some(existing) => {
+                if candidate_epoch > existing.updated_epoch.unwrap_or(0) {
+                    *existing = candidate;
+                }
+            }
+            None => {
+                by_id.insert(candidate.thread_id.clone(), candidate);
+            }
+        }
+    }
+
+    Ok(by_id.into_values().collect())
 }
 
 fn fetch_opencode_search_text(

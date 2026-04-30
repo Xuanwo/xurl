@@ -110,7 +110,8 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
             | xurl_core::ProviderKind::Cursor
             | xurl_core::ProviderKind::Gemini
             | xurl_core::ProviderKind::Kimi
-            | xurl_core::ProviderKind::Opencode => uri.agent_id.is_some(),
+            | xurl_core::ProviderKind::Opencode
+            | xurl_core::ProviderKind::Openclaw => uri.agent_id.is_some(),
             xurl_core::ProviderKind::Pi => uri.agent_id.as_deref().is_some_and(is_uuid_session_id),
         };
         let markdown = if is_subagent_drilldown {
@@ -377,7 +378,7 @@ impl WriteEventSink for CliWriteSink {
 
 const ISSUE_CREATE_URL: &str = "https://github.com/Xuanwo/xurl/issues/new";
 const SUPPORTED_PROVIDERS: &[&str] = &[
-    "amp", "copilot", "codex", "claude", "cursor", "gemini", "kimi", "pi", "opencode",
+    "amp", "copilot", "codex", "claude", "cursor", "gemini", "kimi", "openclaw", "pi", "opencode",
 ];
 
 #[derive(Default)]
@@ -468,7 +469,7 @@ fn expected_session_id_shape(provider: Option<&str>) -> Option<&'static str> {
         Some("amp") => Some("T-<uuid>"),
         Some("opencode") => Some("ses_<id>"),
         Some("codex") | Some("copilot") | Some("claude") | Some("cursor") | Some("gemini")
-        | Some("kimi") | Some("pi") => Some("<uuid>"),
+        | Some("kimi") | Some("openclaw") | Some("pi") => Some("<uuid>"),
         _ => None,
     }
 }
@@ -489,6 +490,9 @@ fn provider_root_check(provider: &str) -> Option<String> {
             Some("verify GEMINI_CLI_HOME/.gemini or ~/.gemini contains this thread".to_string())
         }
         "kimi" => Some("verify KIMI_SHARE_DIR or ~/.kimi contains this thread".to_string()),
+        "openclaw" => Some(
+            "verify OPENCLAW_HOME or ~/.openclaw contains this thread".to_string(),
+        ),
         "pi" => Some("verify PI_CODING_AGENT_DIR or ~/.pi/agent contains this thread".to_string()),
         "opencode" => Some(
             "verify XDG_DATA_HOME/opencode or ~/.local/share/opencode contains this thread"
@@ -579,6 +583,20 @@ fn provider_command_steps(command: &str, failed: bool) -> Vec<String> {
                 vec![
                     "run `gemini --version`".to_string(),
                     "install Gemini CLI if missing, then authenticate".to_string(),
+                ]
+            }
+        }
+        "openclaw" => {
+            if failed {
+                vec![
+                    "verify OpenClaw gateway and authentication configuration".to_string(),
+                    "retry with `openclaw agent --message \"hello\" --json` to inspect provider output"
+                        .to_string(),
+                ]
+            } else {
+                vec![
+                    "run `openclaw --version` (or check XURL_OPENCLAW_BIN)".to_string(),
+                    "install OpenClaw if missing, ensure `node` is available in PATH".to_string(),
                 ]
             }
         }
